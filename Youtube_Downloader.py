@@ -68,7 +68,13 @@ class YouTubeDownloader:
         self.cookie_file_path = None
         self.is_animating = False
         self.dot_count = 0
+
+        self.last_clipboard_url = ""
+        self.popup_window = None
+
         self.create_widgets()
+
+        self.check_clipboard()
 
     def create_widgets(self):
         """
@@ -163,6 +169,135 @@ class YouTubeDownloader:
         
         self.status_label = ctk.CTkLabel(main_frame, text="Enter a YouTube URL to begin.", font=("Segoe UI", 12, 'italic'))
         self.status_label.pack(pady=(10, 0))
+
+
+
+
+
+
+    def check_clipboard(self):
+        """Periodically checks the clipboard and shows a popup if a new YouTube URL is found."""
+        try:
+            clipboard_content = self.root.clipboard_get()
+            # Check if the content is new
+            if clipboard_content != self.last_clipboard_url:
+                youtube_regex = r'(https?://)?(www\.)?(youtube|youtu|youtube-nocookie)\.(com|be)/(watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})'
+                match = re.search(youtube_regex, clipboard_content)
+
+                if match:
+                    # If it's a valid URL, update the last URL and show the popup
+                    self.last_clipboard_url = clipboard_content
+                    self.show_url_popup(clipboard_content)
+
+        except Exception:
+            # Clipboard might be empty or contain non-text data
+            self.last_clipboard_url = "" # Reset on error
+
+        self.root.after(1500, self.check_clipboard) # Check every 1.5 seconds
+
+
+    # def show_url_popup(self, url):
+    #     """Creates and shows a small popup to analyze a detected URL."""
+    #     # If a popup already exists, just bring it to the front
+    #     if self.popup_window and self.popup_window.winfo_exists():
+    #         self.popup_window.lift()
+    #         return
+
+    #     self.popup_window = ctk.CTkToplevel(self.root)
+    #     self.popup_window.title("")
+    #     self.popup_window.geometry("350x120")
+    #     self.popup_window.resizable(False, False)
+    #     self.popup_window.transient(self.root)
+
+    #     # Position the popup in the bottom-right corner of the main window
+    #     main_x = self.root.winfo_x()
+    #     main_y = self.root.winfo_y()
+    #     main_w = self.root.winfo_width()
+    #     main_h = self.root.winfo_height()
+    #     self.popup_window.geometry(f"+{main_x + main_w - 360}+{main_y + main_h - 130}")
+
+    #     popup_frame = ctk.CTkFrame(self.popup_window, fg_color="transparent")
+    #     popup_frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+    #     # Display a truncated version of the URL
+    #     display_url = (url[:45] + '...') if len(url) > 45 else url
+    #     ctk.CTkLabel(popup_frame, text="YouTube URL detected in clipboard:", font=("Segoe UI", 12)).pack()
+    #     ctk.CTkLabel(popup_frame, text=display_url, font=("Segoe UI", 10, "italic")).pack(pady=(0, 10))
+
+    #     button_frame = ctk.CTkFrame(popup_frame, fg_color="transparent")
+    #     button_frame.pack()
+
+    #     analyze_button = ctk.CTkButton(button_frame, text="Analyze Now", command=lambda: self.analyze_from_popup(url))
+    #     analyze_button.pack(side="left", padx=5)
+
+    #     dismiss_button = ctk.CTkButton(button_frame, text="Dismiss", fg_color="gray", hover_color="dimgray", command=self.on_popup_close)
+    #     dismiss_button.pack(side="left", padx=5)
+
+    #     self.popup_window.protocol("WM_DELETE_WINDOW", self.on_popup_close)
+    #     self.popup_window.after(100, self.popup_window.lift) # Ensure it appears on top
+
+    def show_url_popup(self, url):
+        """Creates a bigger, bolder, centered, top-most popup to analyze a detected URL."""
+        if self.popup_window and self.popup_window.winfo_exists():
+            self.popup_window.lift()
+            return
+
+        self.popup_window = ctk.CTkToplevel(self.root)
+        self.popup_window.title("New URL Detected")
+        
+        # --- MODIFICATION: Make the window always on top ---
+        self.popup_window.attributes("-topmost", True)
+
+        # --- MODIFICATION: Increase size and center on the screen ---
+        popup_width = 450
+        popup_height = 180
+        screen_width = self.popup_window.winfo_screenwidth()
+        screen_height = self.popup_window.winfo_screenheight()
+        x = (screen_width / 2) - (popup_width / 2)
+        y = (screen_height / 2) - (popup_height / 2)
+        self.popup_window.geometry(f"{popup_width}x{popup_height}+{int(x)}+{int(y)}")
+        
+        self.popup_window.resizable(False, False)
+        self.popup_window.transient(self.root)
+
+        popup_frame = ctk.CTkFrame(self.popup_window, fg_color="transparent")
+        popup_frame.pack(expand=True, fill="both", padx=20, pady=15)
+        
+        # --- MODIFICATION: Use bigger, bolder fonts ---
+        display_url = (url[:55] + '...') if len(url) > 55 else url
+        ctk.CTkLabel(popup_frame, text="YouTube URL Detected!", font=("Segoe UI", 18, "bold")).pack(pady=(0, 5))
+        ctk.CTkLabel(popup_frame, text=display_url, font=("Segoe UI", 12, "italic")).pack(pady=(0, 15))
+
+        button_frame = ctk.CTkFrame(popup_frame, fg_color="transparent")
+        button_frame.pack()
+        
+        # --- MODIFICATION: Enlarge the buttons ---
+        analyze_button = ctk.CTkButton(button_frame, text="Analyze Now", command=lambda: self.analyze_from_popup(url), 
+                                       height=40, width=130, font=("Segoe UI", 14, "bold"))
+        analyze_button.pack(side="left", padx=10)
+        
+        dismiss_button = ctk.CTkButton(button_frame, text="Dismiss", fg_color="gray", hover_color="dimgray", 
+                                       command=self.on_popup_close, height=40, width=130, font=("Segoe UI", 14, "bold"))
+        dismiss_button.pack(side="left", padx=10)
+
+        self.popup_window.protocol("WM_DELETE_WINDOW", self.on_popup_close)
+        self.popup_window.after(100, self.popup_window.lift)
+
+
+
+    def analyze_from_popup(self, url):
+        """Pastes the URL from the popup and starts the analysis."""
+        self.url_entry.delete(0, 'end')
+        self.url_entry.insert(0, url)
+        self.start_fetch_thread()
+        self.on_popup_close()
+
+    def on_popup_close(self):
+        """Safely closes the popup and resets the tracking variable."""
+        if self.popup_window:
+            self.popup_window.destroy()
+            self.popup_window = None
+
 
     def import_cookies(self):
         file_path = filedialog.askopenfilename(
