@@ -284,66 +284,235 @@ class YouTubeDownloader:
 
 
 
-    def load_thumbnail(self, url):
-        """Downloads and prepares the thumbnail in a background thread."""
-        try:
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
+    # def load_thumbnail(self, url):
+    #     """Downloads and prepares the thumbnail in a background thread."""
+    #     try:
+    #         response = requests.get(url, stream=True)
+    #         response.raise_for_status()
 
-            image_data = response.content
-            raw_image = Image.open(BytesIO(image_data))
+    #         image_data = response.content
+    #         raw_image = Image.open(BytesIO(image_data))
 
-            w, h = raw_image.size
-            aspect_ratio = h / w
-            new_width = 480
-            new_height = int(new_width * aspect_ratio)
+    #         w, h = raw_image.size
+    #         aspect_ratio = h / w
+    #         new_width = 480
+    #         new_height = int(new_width * aspect_ratio)
 
-            resized_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
+    #         resized_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
 
-            # Pass the prepared Pillow image to the main thread for UI updates
-            self.root.after(0, self.update_ui_with_thumbnail, resized_image)
+    #         # Pass the prepared Pillow image to the main thread for UI updates
+    #         self.root.after(0, self.update_ui_with_thumbnail, resized_image)
 
-        except Exception as e:
-            print(f"Failed to load thumbnail: {e}")
-            # If it fails, pass None to the UI update function
-            self.root.after(0, self.update_ui_with_thumbnail, None)
+    #     except Exception as e:
+    #         print(f"Failed to load thumbnail: {e}")
+    #         # If it fails, pass None to the UI update function
+    #         self.root.after(0, self.update_ui_with_thumbnail, None)
 
 
-    def update_ui_with_thumbnail(self, pillow_image):
-        """Creates the CTkImage and updates the UI from the main thread."""
-        if pillow_image:
-            # ... (image creation logic is the same) ...
-            self.thumbnail_image = ctk.CTkImage(light_image=pillow_image, 
-                                            dark_image=pillow_image, 
-                                            size=pillow_image.size)
+    # def update_ui_with_thumbnail(self, pillow_image):
+    #     """Creates the CTkImage and updates the UI from the main thread."""
+    #     if pillow_image:
+    #         # ... (image creation logic is the same) ...
+    #         self.thumbnail_image = ctk.CTkImage(light_image=pillow_image, 
+    #                                         dark_image=pillow_image, 
+    #                                         size=pillow_image.size)
             
-            # Use the new variable name here
-            self.current_thumbnail_label.configure(image=self.thumbnail_image, text="") 
+    #         # Use the new variable name here
+    #         self.current_thumbnail_label.configure(image=self.thumbnail_image, text="") 
+    #         self.root.geometry(f"600x{600 + pillow_image.height + 40}")
+    #     else:
+    #         # And here
+    #         self.current_thumbnail_label.configure(text="Thumbnail not available", image=None)
+    #         self.root.geometry("600x650")
+
+    def update_ui_with_results(self, info, pillow_image):
+        """Updates the entire UI at once when all data is ready."""
+        self.is_animating = False
+
+        # --- Part 1: Destroy old thumbnail label if it exists ---
+        if self.current_thumbnail_label:
+            self.current_thumbnail_label.destroy()
+            self.current_thumbnail_label = None
+
+        self.info_frame.pack_forget()
+        self.root.geometry("600x600")
+
+        # --- Part 2: Display Thumbnail (or error) ---
+        uploader_name = f"Uploader: {info.get('uploader', 'N/A')}"
+        self.uploader_label.configure(text=uploader_name)
+
+        self.current_thumbnail_label = ctk.CTkLabel(self.info_frame, text="")
+        self.info_frame.pack(fill="x", pady=(15, 5))
+        self.current_thumbnail_label.pack()
+
+        if pillow_image:
+            self.thumbnail_image = ctk.CTkImage(light_image=pillow_image, 
+                                                dark_image=pillow_image, 
+                                                size=pillow_image.size)
+            self.current_thumbnail_label.configure(image=self.thumbnail_image)
             self.root.geometry(f"600x{600 + pillow_image.height + 40}")
         else:
-            # And here
-            self.current_thumbnail_label.configure(text="Thumbnail not available", image=None)
+            self.current_thumbnail_label.configure(text="Thumbnail not available")
             self.root.geometry("600x650")
 
+        # --- Part 3: Display Qualities and Title ---
+        self.original_video_title = info.get('title', 'Untitled Video')
+        self.available_formats = []
+        formats = info.get('formats', [])
+        for f in formats:
+            if f.get('ext') == 'mp4' and f.get('vcodec') != 'none':
+                filesize_mb = f.get('filesize') or f.get('filesize_approx')
+                filesize_str = f"{filesize_mb / (1024*1024):.2f} MB" if filesize_mb else "N/A"
+                if f.get('acodec') != 'none':
+                    display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str}"
+                else:
+                    display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str} (Requires FFmpeg)"
+                self.available_formats.append({'text': display_text, 'height': f.get('height', 0)})
+
+        if self.available_formats:
+            self.available_formats.sort(key=lambda x: x['height'], reverse=True)
+            display_list = [f['text'] for f in self.available_formats]
+            self.quality_combobox.configure(values=display_list, state='readonly')
+            highest_quality_text = display_list[0]
+            self.quality_combobox.set(highest_quality_text)
+            self.on_quality_change(highest_quality_text)
+            self.download_button.configure(state="normal")
+            self.title_entry.configure(state="normal")
+            self.status_label.configure(text="Select a quality and download.")
+        else:
+            self.status_label.configure(text="No MP4 formats found.")
+            messagebox.showwarning("Warning", "Could not find any MP4 formats.")
+
+        self.analyze_button.configure(state="normal")
 
 
 
+
+
+    # def fetch_qualities(self, url):
+    #     info = None
+    #     pillow_image = None
+
+    #     try:
+    #         # --- Tier 1: Metadata Fetch ---
+    #         with yt_dlp.YoutubeDL({'noplaylist': True, 'quiet': True}) as ydl:
+    #             info = ydl.extract_info(url, download=False)
+
+    #         if self.stop_operation_flag.is_set(): return
+
+    #         # --- Tier 2: Thumbnail Fetch (in the same thread) ---
+    #         if info:
+    #             thumbnail_url = info.get('thumbnail')
+    #             if thumbnail_url:
+    #                 try:
+    #                     response = requests.get(thumbnail_url, stream=True)
+    #                     response.raise_for_status()
+    #                     image_data = response.content
+    #                     raw_image = Image.open(BytesIO(image_data))
+
+    #                     w, h = raw_image.size
+    #                     aspect_ratio = h / w
+    #                     new_width = 480
+    #                     new_height = int(new_width * aspect_ratio)
+    #                     pillow_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
+    #                 except Exception as e:
+    #                     print(f"Failed to load thumbnail: {e}")
+
+    #     except yt_dlp.utils.DownloadError as e:
+    #         if self.stop_operation_flag.is_set(): return
+    #         error_message = str(e).lower()
+
+    #         blocking_errors = ["sign in to confirm you're not a bot", "http error 429", "too many requests", "winerror 10054", "forcibly closed by the remote host"]
+    #         private_video_errors = ["private video", "video unavailable"]
+    #         invalid_url_errors = ["is not a valid url"]
+
+    #         if any(err in error_message for err in invalid_url_errors):
+    #             self.root.after(0, lambda: messagebox.showerror("Invalid URL", "The URL you entered does not appear to be a valid YouTube link."))
+    #             self.root.after(0, self.reset_ui_after_error)
+    #             return
+
+    #         if any(err in error_message for err in private_video_errors):
+    #             self.root.after(0, lambda: messagebox.showerror("Video Not Found", "This video is private, has been deleted, or is otherwise unavailable."))
+    #             self.root.after(0, self.reset_ui_after_error)
+    #             return
+
+    #         if any(err in error_message for err in blocking_errors):
+    #             # --- Tier 2: Try with browser cookies ---
+    #             browsers = ['chrome', 'firefox', 'edge', 'opera', 'brave']
+    #             for browser in browsers:
+    #                 if self.stop_operation_flag.is_set(): return
+    #                 try:
+    #                     ydl_opts_cookies = {'noplaylist': True, 'quiet': True, 'cookiesfrombrowser': (browser,)}
+    #                     with yt_dlp.YoutubeDL(ydl_opts_cookies) as ydl:
+    #                         info = ydl.extract_info(url, download=False)
+    #                     print(f"Successfully extracted info using {browser} cookies.")
+    #                     break 
+    #                 except Exception as browser_e:
+    #                     print(f"Could not get info with {browser} cookies: {browser_e}.")
+    #                     info = None
+
+    #             if self.stop_operation_flag.is_set(): return
+    #             error_message = str(e).lower()
+
+    #             if not info:
+    #                 self.root.after(0, self.show_cookie_error_dialog)
+    #                 self.root.after(0, self.reset_ui_after_error)
+    #                 return
+    #         else:
+    #             if self.stop_operation_flag.is_set(): return
+    #             self.root.after(0, lambda: messagebox.showerror("Connection Error", "Could not connect to YouTube. Please check your internet connection and try again."))
+    #             self.root.after(0, self.reset_ui_after_error)
+    #             return
+
+    #     except Exception as e:
+    #         if self.stop_operation_flag.is_set(): return
+    #         self.root.after(0, lambda: messagebox.showerror("An Unexpected Error Occurred", f"An unknown error occurred. Please restart the application and try again.\n\nDetails: {str(e)}"))
+    #         self.root.after(0, self.reset_ui_after_error)
+    #         return
+
+    #     if self.stop_operation_flag.is_set(): return
+
+    #     if not info:
+    #         self.root.after(0, self.reset_ui_after_error)
+    #         return
+
+    #     self.root.after(0, self.update_ui_after_analysis, info)
 
 
     def fetch_qualities(self, url):
         info = None
-
+        pillow_image = None
+        
         try:
-            # --- Tier 1: Try without any cookies ---
+            # --- Tier 1: Metadata Fetch ---
             with yt_dlp.YoutubeDL({'noplaylist': True, 'quiet': True}) as ydl:
                 info = ydl.extract_info(url, download=False)
-            # raise yt_dlp.utils.DownloadError("sign in to confirm you're not a bot") # SIMULATED ERROR
 
+            if self.stop_operation_flag.is_set(): return
+
+            # --- Tier 2: Thumbnail Fetch (in the same thread) ---
+            if info:
+                thumbnail_url = info.get('thumbnail')
+                if thumbnail_url:
+                    try:
+                        response = requests.get(thumbnail_url, stream=True, timeout=10)
+                        response.raise_for_status()
+                        image_data = response.content
+                        raw_image = Image.open(BytesIO(image_data))
+                        
+                        w, h = raw_image.size
+                        aspect_ratio = h / w
+                        new_width = 480
+                        new_height = int(new_width * aspect_ratio)
+                        pillow_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
+                    except Exception as e:
+                        print(f"Failed to load thumbnail: {e}")
+                        pillow_image = None # Ensure it's None on failure
 
         except yt_dlp.utils.DownloadError as e:
             if self.stop_operation_flag.is_set(): return
             error_message = str(e).lower()
-
+            
             blocking_errors = ["sign in to confirm you're not a bot", "http error 429", "too many requests", "winerror 10054", "forcibly closed by the remote host"]
             private_video_errors = ["private video", "video unavailable"]
             invalid_url_errors = ["is not a valid url"]
@@ -359,7 +528,6 @@ class YouTubeDownloader:
                 return
 
             if any(err in error_message for err in blocking_errors):
-                # --- Tier 2: Try with browser cookies ---
                 browsers = ['chrome', 'firefox', 'edge', 'opera', 'brave']
                 for browser in browsers:
                     if self.stop_operation_flag.is_set(): return
@@ -372,7 +540,7 @@ class YouTubeDownloader:
                     except Exception as browser_e:
                         print(f"Could not get info with {browser} cookies: {browser_e}.")
                         info = None
-
+                
                 if self.stop_operation_flag.is_set(): return
                 if not info:
                     self.root.after(0, self.show_cookie_error_dialog)
@@ -395,121 +563,163 @@ class YouTubeDownloader:
         if not info:
             self.root.after(0, self.reset_ui_after_error)
             return
+        
+        # --- Final Step: Call the main UI updater with all data ready ---
+        self.root.after(0, self.update_ui_with_results, info, pillow_image)
 
-        self.root.after(0, self.update_ui_after_analysis, info)
-
-
+    # def fetch_with_cookies(self):
+    #     """A specific fetcher that ONLY uses the manually imported cookie file."""
+    #     url = self.url_entry.get()
+    #     if not self.cookie_file_path or not os.path.exists(self.cookie_file_path):
+    #         messagebox.showerror("Error", "Cookie file not found or not specified.")
+    #         self.reset_ui_after_error()
+    #         return
+            
+    #     try:
+    #         ydl_opts = {'noplaylist': True, 'quiet': True, 'cookiefile': self.cookie_file_path}
+    #         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    #             info = ydl.extract_info(url, download=False)
+    #         self.root.after(0, self.update_ui_after_analysis, info)
+    #     except Exception as e:
+    #         messagebox.showerror("Analysis with Cookies Failed", f"Could not analyze the video using the provided cookies.\n\nError: {e}")
+    #         self.root.after(0, self.reset_ui_after_error)
 
 
     def fetch_with_cookies(self):
-        """A specific fetcher that ONLY uses the manually imported cookie file."""
+        """A specific fetcher that uses a cookie file and also fetches the thumbnail."""
         url = self.url_entry.get()
+        info = None
+        pillow_image = None
+
         if not self.cookie_file_path or not os.path.exists(self.cookie_file_path):
             messagebox.showerror("Error", "Cookie file not found or not specified.")
             self.reset_ui_after_error()
             return
-            
+
         try:
             ydl_opts = {'noplaylist': True, 'quiet': True, 'cookiefile': self.cookie_file_path}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-            self.root.after(0, self.update_ui_after_analysis, info)
+
+            if info:
+                thumbnail_url = info.get('thumbnail')
+                if thumbnail_url:
+                    try:
+                        response = requests.get(thumbnail_url, stream=True)
+                        response.raise_for_status()
+                        image_data = response.content
+                        raw_image = Image.open(BytesIO(image_data))
+
+                        w, h = raw_image.size
+                        aspect_ratio = h / w
+                        new_width = 480
+                        new_height = int(new_width * aspect_ratio)
+                        pillow_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
+                    except Exception as e:
+                        print(f"Failed to load thumbnail: {e}")
+
         except Exception as e:
             messagebox.showerror("Analysis with Cookies Failed", f"Could not analyze the video using the provided cookies.\n\nError: {e}")
             self.root.after(0, self.reset_ui_after_error)
+            return
+
+        if not info:
+            self.root.after(0, self.reset_ui_after_error)
+            return
+
+        self.root.after(0, self.update_ui_with_results, info, pillow_image)
 
 
 
-
-    def update_ui_after_analysis(self, info):
-        """Safely updates the UI with fetched video info from the main thread."""
-        self.is_animating = False
+    # def update_ui_after_analysis(self, info):
+    #     """Safely updates the UI with fetched video info from the main thread."""
+    #     self.is_animating = False
         
-        # --- NEW SOLUTION: Destroy the old label completely ---
-        if self.current_thumbnail_label:
-            self.current_thumbnail_label.destroy()
-            self.current_thumbnail_label = None
+    #     # --- NEW SOLUTION: Destroy the old label completely ---
+    #     if self.current_thumbnail_label:
+    #         self.current_thumbnail_label.destroy()
+    #         self.current_thumbnail_label = None
         
-        self.info_frame.pack_forget()
-        self.root.geometry("600x600")
-        # --- END NEW SOLUTION ---
+    #     self.info_frame.pack_forget()
+    #     self.root.geometry("600x600")
+    #     # --- END NEW SOLUTION ---
 
-        thumbnail_url = info.get('thumbnail')
-        uploader_name = f"Uploader: {info.get('uploader', 'N/A')}"
-        self.uploader_label.configure(text=uploader_name)
+    #     thumbnail_url = info.get('thumbnail')
+    #     uploader_name = f"Uploader: {info.get('uploader', 'N/A')}"
+    #     self.uploader_label.configure(text=uploader_name)
 
-        # Create a brand new label for the new thumbnail
-        self.current_thumbnail_label = ctk.CTkLabel(self.info_frame, text="Loading thumbnail...")
-        # Pack the container frame to make the "Loading..." text visible
-        self.info_frame.pack(fill="x", pady=(15, 5))
-        self.current_thumbnail_label.pack()
+    #     # Create a brand new label for the new thumbnail
+    #     self.current_thumbnail_label = ctk.CTkLabel(self.info_frame, text="Loading thumbnail...")
+    #     # Pack the container frame to make the "Loading..." text visible
+    #     self.info_frame.pack(fill="x", pady=(15, 5))
+    #     self.current_thumbnail_label.pack()
         
-        if thumbnail_url:
-            threading.Thread(target=self.load_thumbnail, args=(thumbnail_url,), daemon=True).start()
-        else:
-            # If no URL, pass None to the UI updater to show an error
-            self.root.after(0, self.update_ui_with_thumbnail, None)
+    #     if thumbnail_url:
+    #         threading.Thread(target=self.load_thumbnail, args=(thumbnail_url,), daemon=True).start()
+    #     else:
+    #         # If no URL, pass None to the UI updater to show an error
+    #         self.root.after(0, self.update_ui_with_thumbnail, None)
 
 
-        self.original_video_title = info.get('title', 'Untitled Video')
-        self.available_formats = []
-        formats = info.get('formats', [])
-        for f in formats:
-            if f.get('ext') == 'mp4' and f.get('vcodec') != 'none':
-                filesize_mb = f.get('filesize') or f.get('filesize_approx')
-                filesize_str = f"{filesize_mb / (1024*1024):.2f} MB" if filesize_mb else "N/A"
-                if f.get('acodec') != 'none':
-                    display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str}"
-                    is_merged = True
-                else:
-                    display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str} (Requires FFmpeg)"
-                    is_merged = False
-                self.available_formats.append({'text': display_text, 'format_id': f['format_id'], 'is_merged': is_merged, 'height': f.get('height', 0)})
+    #     self.original_video_title = info.get('title', 'Untitled Video')
+    #     self.available_formats = []
+    #     formats = info.get('formats', [])
+    #     for f in formats:
+    #         if f.get('ext') == 'mp4' and f.get('vcodec') != 'none':
+    #             filesize_mb = f.get('filesize') or f.get('filesize_approx')
+    #             filesize_str = f"{filesize_mb / (1024*1024):.2f} MB" if filesize_mb else "N/A"
+    #             if f.get('acodec') != 'none':
+    #                 display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str}"
+    #                 is_merged = True
+    #             else:
+    #                 display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str} (Requires FFmpeg)"
+    #                 is_merged = False
+    #             self.available_formats.append({'text': display_text, 'format_id': f['format_id'], 'is_merged': is_merged, 'height': f.get('height', 0)})
         
-        if self.available_formats:
-            self.available_formats.sort(key=lambda x: x['height'], reverse=True)
-            display_list = [f['text'] for f in self.available_formats]
-            self.quality_combobox.configure(values=display_list)
+    #     if self.available_formats:
+    #         self.available_formats.sort(key=lambda x: x['height'], reverse=True)
+    #         display_list = [f['text'] for f in self.available_formats]
+    #         self.quality_combobox.configure(values=display_list)
             
-            # Get the highest quality format object (the first one after sorting)
-            highest_quality_format = self.available_formats[0]
+    #         # Get the highest quality format object (the first one after sorting)
+    #         highest_quality_format = self.available_formats[0]
             
-            # Set the combobox to display the text of the highest quality format
-            self.quality_combobox.set(highest_quality_format['text'])
+    #         # Set the combobox to display the text of the highest quality format
+    #         self.quality_combobox.set(highest_quality_format['text'])
             
-            # Directly update the video title based on this default highest quality
-            quality_str = f"{highest_quality_format['height']}p"
-            initial_title = f"{self.original_video_title} - [{quality_str}] - By Chai & Clip"
-            self.video_title_var.set(initial_title)
+    #         # Directly update the video title based on this default highest quality
+    #         quality_str = f"{highest_quality_format['height']}p"
+    #         initial_title = f"{self.original_video_title} - [{quality_str}] - By Chai & Clip"
+    #         self.video_title_var.set(initial_title)
 
-            # highest_quality_format_text = display_list[0]
-            # print("----------------------------------------@@@@@@@@@@")
-            # print(highest_quality_format_text)
-            # self.quality_combobox.set(highest_quality_format_text)
+    #         # highest_quality_format_text = display_list[0]
+    #         # print("----------------------------------------@@@@@@@@@@")
+    #         # print(highest_quality_format_text)
+    #         # self.quality_combobox.set(highest_quality_format_text)
             
-            # # Now that the value is set, call the function to update the title
-            # self.on_quality_change(highest_quality_format_text)
+    #         # # Now that the value is set, call the function to update the title
+    #         # self.on_quality_change(highest_quality_format_text)
             
-            # self.quality_combobox.configure(state='readonly')
+    #         # self.quality_combobox.configure(state='readonly')
 
-            # --- Set highest quality and update title automatically ---
+    #         # --- Set highest quality and update title automatically ---
             
-            self.quality_combobox.configure(state='readonly')
+    #         self.quality_combobox.configure(state='readonly')
             
-            highest_quality_format_text = display_list[0]
-            self.quality_combobox.set(highest_quality_format_text)
+    #         highest_quality_format_text = display_list[0]
+    #         self.quality_combobox.set(highest_quality_format_text)
             
-            self.on_quality_change(highest_quality_format_text)
+    #         self.on_quality_change(highest_quality_format_text)
 
 
-            self.download_button.configure(state="normal")
-            self.title_entry.configure(state="normal")
-            self.status_label.configure(text="Select a quality and download.")
-        else:
-            self.status_label.configure(text="No MP4 formats found.")
-            messagebox.showwarning("Warning", "Could not find any MP4 formats.")
+    #         self.download_button.configure(state="normal")
+    #         self.title_entry.configure(state="normal")
+    #         self.status_label.configure(text="Select a quality and download.")
+    #     else:
+    #         self.status_label.configure(text="No MP4 formats found.")
+    #         messagebox.showwarning("Warning", "Could not find any MP4 formats.")
         
-        self.analyze_button.configure(state="normal")
+    #     self.analyze_button.configure(state="normal")
 
     # def on_quality_change(self, choice):
     #     selected_value = self.quality_combobox.get()
