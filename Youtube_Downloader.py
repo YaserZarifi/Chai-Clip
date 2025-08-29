@@ -1,0 +1,604 @@
+import os
+import sys
+import threading
+import yt_dlp
+import subprocess
+import re
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
+from collections import deque
+
+class YouTubeDownloader:
+    """
+    A modern GUI application for downloading YouTube videos using customtkinter.
+    """
+    def __init__(self, root):
+        """
+        Initializes the application's GUI.
+        """
+        self.root = root
+        self.root.title("Chai & Clip")
+        self.root.geometry("600x600")
+        self.root.resizable(False, False)
+
+        # --- Set App Icon ---
+        try:
+            if getattr(sys, 'frozen', False):
+                self.application_path = os.path.dirname(sys.executable)
+            else:
+                self.application_path = os.path.dirname(os.path.abspath(__file__))
+            
+            icon_path = os.path.join(self.application_path, "logo.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except Exception as e:
+            print(f"Error loading icon: {e}")
+
+        self.download_thread = None
+        # self.stop_download_flag = threading.Event()
+        self.stop_operation_flag = threading.Event()
+        self.available_formats = []
+        self.final_filepath = None
+        self.video_title_var = ctk.StringVar()
+        self.original_video_title = ""
+        self.speed_samples = deque(maxlen=15)
+        self.cookie_file_path = None
+        self.is_animating = False
+        self.dot_count = 0
+        self.create_widgets()
+
+    def create_widgets(self):
+        """
+        Creates and arranges all the GUI widgets in the main window.
+        """
+        main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # --- Top Bar ---
+        top_bar_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        top_bar_frame.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(top_bar_frame, text="Chai & Clip", font=("Segoe UI", 18, "bold")).pack(side="left")
+        self.cookie_status_label = ctk.CTkLabel(top_bar_frame, text="Status: Not Authenticated", font=("Segoe UI", 10), text_color="gray")
+        self.cookie_status_label.pack(side="right", padx=10)
+
+        # --- URL Input & Analysis ---
+        url_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        url_frame.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(url_frame, text="YouTube URL:", font=("Segoe UI", 14)).pack(side="left")
+        self.url_entry = ctk.CTkEntry(url_frame, font=("Segoe UI", 12), height=35)
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 10))
+        self.analyze_button = ctk.CTkButton(url_frame, text="Analyze", command=self.start_fetch_thread, height=35, width=80)
+        self.analyze_button.pack(side="left")
+
+        # --- Video Title Input ---
+        title_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        title_frame.pack(fill="x", pady=10)
+        ctk.CTkLabel(title_frame, text="Video Title:", font=("Segoe UI", 14)).pack(side="left", padx=(0, 22))
+        self.title_entry = ctk.CTkEntry(title_frame, textvariable=self.video_title_var, font=("Segoe UI", 12), state='disabled', height=35)
+        self.title_entry.pack(fill="x", expand=True)
+
+        # --- Quality Selection ---
+        quality_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        quality_frame.pack(fill="x", pady=10)
+        ctk.CTkLabel(quality_frame, text="Select Quality:", font=("Segoe UI", 14)).pack(side="left", padx=(0, 5))
+        self.quality_combobox = ctk.CTkComboBox(quality_frame, state='readonly', font=("Segoe UI", 12), height=35, dropdown_font=("Segoe UI", 12))
+        self.quality_combobox.pack(fill="x", expand=True)
+        self.quality_combobox.set("Click 'Analyze' to see options")
+        self.quality_combobox.configure(state='disabled')
+        self.quality_combobox.configure(command=self.on_quality_change)
+
+        # --- Download Path Selection ---
+        path_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        path_frame.pack(fill="x", pady=10)
+        ctk.CTkLabel(path_frame, text="Save to:", font=("Segoe UI", 14)).pack(side="left", padx=(0, 42))
+        self.path_var = ctk.StringVar(value=os.path.join(os.path.expanduser('~'), 'Downloads'))
+        self.path_entry = ctk.CTkEntry(path_frame, textvariable=self.path_var, font=("Segoe UI", 12), state='disabled', height=35)
+        self.path_entry.pack(side="left", fill="x", expand=True)
+        self.browse_button = ctk.CTkButton(path_frame, text="Browse...", command=self.browse_directory, height=35, width=80)
+        self.browse_button.pack(side="left", padx=(10, 0))
+
+        # --- Progress Display & Stats ---
+        progress_stats_frame = ctk.CTkFrame(main_frame)
+        progress_stats_frame.pack(fill="x", pady=(20, 10))
+        
+        self.progress_bar = ctk.CTkProgressBar(progress_stats_frame)
+        self.progress_bar.set(0)
+        self.progress_bar.pack(fill="x", expand=True, pady=(0, 5))
+        
+        self.progress_label = ctk.CTkLabel(progress_stats_frame, text="0%", font=("Segoe UI", 12))
+        self.progress_label.pack()
+
+        stats_frame = ctk.CTkFrame(progress_stats_frame, fg_color="transparent")
+        stats_frame.pack(fill="x", pady=10)
+        stats_frame.columnconfigure((0, 1, 2), weight=1)
+        
+        self.size_label = ctk.CTkLabel(stats_frame, text="Size: ---", font=("Segoe UI", 12))
+        self.size_label.grid(row=0, column=0, sticky="w")
+        self.speed_label = ctk.CTkLabel(stats_frame, text="Speed: ---", font=("Segoe UI", 12))
+        self.speed_label.grid(row=0, column=1)
+        self.eta_label = ctk.CTkLabel(stats_frame, text="ETA: ---", font=("Segoe UI", 12))
+        self.eta_label.grid(row=0, column=2, sticky="e")
+
+        # --- Control Buttons ---
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(pady=20)
+        self.download_button = ctk.CTkButton(button_frame, text="Download", command=self.start_download, state="disabled", height=40, width=120, font=("Segoe UI", 14, "bold"))
+        self.download_button.pack(side="left", padx=10)
+        self.stop_button = ctk.CTkButton(button_frame, text="Stop", command=self.stop_operation, state="disabled", height=40, width=120, fg_color="#D32F2F", hover_color="#B71C1C")
+        self.stop_button.pack(side="left", padx=10)
+        
+        self.status_label = ctk.CTkLabel(main_frame, text="Enter a YouTube URL to begin.", font=("Segoe UI", 12, 'italic'))
+        self.status_label.pack(pady=(10, 0))
+
+    def import_cookies(self):
+        file_path = filedialog.askopenfilename(
+            title="Select cookies.txt file",
+            filetypes=(("Text files", "*.txt"), ("All files", "*.*"))
+        )
+        if file_path:
+            self.cookie_file_path = file_path
+            self.cookie_status_label.configure(text="Status: Cookies Loaded", text_color="green")
+            print(f"Cookies loaded from: {file_path}")
+            # Automatically re-analyze after importing cookies
+            # self.start_fetch_thread()
+            # Start the analysis animation
+            self.is_animating = True
+            self.animate_status_dots()
+            # Call the new dedicated function in a thread
+            threading.Thread(target=self.fetch_with_cookies, daemon=True).start()
+
+    def show_cookie_error_dialog(self):
+        """Shows a custom dialog with a guide button when cookies are needed."""
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Authentication Required")
+        dialog.geometry("450x220")
+        dialog.resizable(False, False)
+        
+        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+
+        ctk.CTkLabel(main_frame, text="YouTube is blocking requests.", font=("Segoe UI", 16, "bold")).pack(pady=(0, 5))
+        ctk.CTkLabel(main_frame, text="For a permanent fix, please import a cookies file.\nIt's highly recommended to read the guide first.", 
+                     font=("Segoe UI", 12), justify="left").pack(pady=(0, 20))
+        
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(pady=10)
+
+        def open_guide_and_close():
+            guide_path = os.path.join(self.application_path, "Guide.pdf")
+            if os.path.exists(guide_path):
+                self.open_path(guide_path)
+            else:
+                messagebox.showerror("Error", "Guide.pdf not found in the application directory.")
+            dialog.destroy()
+
+        def import_cookies_and_close():
+            dialog.destroy()
+            self.import_cookies()
+
+        ctk.CTkButton(button_frame, text="Open Guide", command=open_guide_and_close).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Import Cookies", command=import_cookies_and_close).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
+        
+        dialog.transient(self.root)
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+
+    def browse_directory(self):
+        directory = filedialog.askdirectory()
+        if directory:
+            self.path_var.set(directory)
+
+    def start_fetch_thread(self):
+        url = self.url_entry.get()
+        if not url:
+            messagebox.showerror("Error", "Please enter a YouTube URL first.")
+            return
+        self.stop_operation_flag.clear() # Reset the flag
+        self.stop_button.configure(state="normal") # Enable the stop button
+
+        self.analyze_button.configure(state="disabled")
+        self.download_button.configure(state="disabled")
+        self.quality_combobox.set("Fetching qualities...")
+        self.quality_combobox.configure(state='disabled')
+        self.title_entry.configure(state='disabled')
+        self.video_title_var.set("")
+
+        self.is_animating = True
+        self.animate_status_dots()
+        
+        threading.Thread(target=self.fetch_qualities, args=(url,), daemon=True).start()
+
+
+    def animate_status_dots(self, base_text="Analyzing"):
+        if not self.is_animating:
+            return
+
+        self.dot_count += 1
+        dots = "." * ((self.dot_count % 3) + 1)
+        self.status_label.configure(text=f"{base_text} {dots.ljust(3)}")
+        
+        self.root.after(500, self.animate_status_dots, base_text)
+
+
+    def fetch_qualities(self, url):
+        info = None
+
+        try:
+            # --- Tier 1: Try without any cookies ---
+            with yt_dlp.YoutubeDL({'noplaylist': True, 'quiet': True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+            # raise yt_dlp.utils.DownloadError("sign in to confirm you're not a bot") # SIMULATED ERROR
+
+
+        except yt_dlp.utils.DownloadError as e:
+            if self.stop_operation_flag.is_set(): return
+            error_message = str(e).lower()
+
+            blocking_errors = ["sign in to confirm you're not a bot", "http error 429", "too many requests", "winerror 10054", "forcibly closed by the remote host"]
+            private_video_errors = ["private video", "video unavailable"]
+            invalid_url_errors = ["is not a valid url"]
+
+            if any(err in error_message for err in invalid_url_errors):
+                self.root.after(0, lambda: messagebox.showerror("Invalid URL", "The URL you entered does not appear to be a valid YouTube link."))
+                self.root.after(0, self.reset_ui_after_error)
+                return
+
+            if any(err in error_message for err in private_video_errors):
+                self.root.after(0, lambda: messagebox.showerror("Video Not Found", "This video is private, has been deleted, or is otherwise unavailable."))
+                self.root.after(0, self.reset_ui_after_error)
+                return
+
+            if any(err in error_message for err in blocking_errors):
+                # --- Tier 2: Try with browser cookies ---
+                browsers = ['chrome', 'firefox', 'edge', 'opera', 'brave']
+                for browser in browsers:
+                    if self.stop_operation_flag.is_set(): return
+                    try:
+                        ydl_opts_cookies = {'noplaylist': True, 'quiet': True, 'cookiesfrombrowser': (browser,)}
+                        with yt_dlp.YoutubeDL(ydl_opts_cookies) as ydl:
+                            info = ydl.extract_info(url, download=False)
+                        print(f"Successfully extracted info using {browser} cookies.")
+                        break 
+                    except Exception as browser_e:
+                        print(f"Could not get info with {browser} cookies: {browser_e}.")
+                        info = None
+
+                if self.stop_operation_flag.is_set(): return
+                if not info:
+                    self.root.after(0, self.show_cookie_error_dialog)
+                    self.root.after(0, self.reset_ui_after_error)
+                    return
+            else:
+                if self.stop_operation_flag.is_set(): return
+                self.root.after(0, lambda: messagebox.showerror("Connection Error", "Could not connect to YouTube. Please check your internet connection and try again."))
+                self.root.after(0, self.reset_ui_after_error)
+                return
+
+        except Exception as e:
+            if self.stop_operation_flag.is_set(): return
+            self.root.after(0, lambda: messagebox.showerror("An Unexpected Error Occurred", f"An unknown error occurred. Please restart the application and try again.\n\nDetails: {str(e)}"))
+            self.root.after(0, self.reset_ui_after_error)
+            return
+
+        if self.stop_operation_flag.is_set(): return
+
+        if not info:
+            self.root.after(0, self.reset_ui_after_error)
+            return
+
+        self.root.after(0, self.update_ui_after_analysis, info)
+
+
+
+
+    def fetch_with_cookies(self):
+        """A specific fetcher that ONLY uses the manually imported cookie file."""
+        url = self.url_entry.get()
+        if not self.cookie_file_path or not os.path.exists(self.cookie_file_path):
+            messagebox.showerror("Error", "Cookie file not found or not specified.")
+            self.reset_ui_after_error()
+            return
+            
+        try:
+            ydl_opts = {'noplaylist': True, 'quiet': True, 'cookiefile': self.cookie_file_path}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            self.root.after(0, self.update_ui_after_analysis, info)
+        except Exception as e:
+            messagebox.showerror("Analysis with Cookies Failed", f"Could not analyze the video using the provided cookies.\n\nError: {e}")
+            self.root.after(0, self.reset_ui_after_error)
+
+
+
+
+    def update_ui_after_analysis(self, info):
+        """Safely updates the UI with fetched video info from the main thread."""
+
+        self.is_animating = False
+
+
+        self.original_video_title = info.get('title', 'Untitled Video')
+        self.available_formats = []
+        formats = info.get('formats', [])
+        for f in formats:
+            if f.get('ext') == 'mp4' and f.get('vcodec') != 'none':
+                filesize_mb = f.get('filesize') or f.get('filesize_approx')
+                filesize_str = f"{filesize_mb / (1024*1024):.2f} MB" if filesize_mb else "N/A"
+                if f.get('acodec') != 'none':
+                    display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str}"
+                    is_merged = True
+                else:
+                    display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str} (Requires FFmpeg)"
+                    is_merged = False
+                self.available_formats.append({'text': display_text, 'format_id': f['format_id'], 'is_merged': is_merged, 'height': f.get('height', 0)})
+        
+        if self.available_formats:
+            self.available_formats.sort(key=lambda x: x['height'], reverse=True)
+            display_list = [f['text'] for f in self.available_formats]
+            self.quality_combobox.configure(values=display_list)
+            
+            # Get the highest quality format object (the first one after sorting)
+            highest_quality_format = self.available_formats[0]
+            
+            # Set the combobox to display the text of the highest quality format
+            self.quality_combobox.set(highest_quality_format['text'])
+            
+            # Directly update the video title based on this default highest quality
+            quality_str = f"{highest_quality_format['height']}p"
+            initial_title = f"{self.original_video_title} - [{quality_str}] - By Chai & Clip"
+            self.video_title_var.set(initial_title)
+
+            # highest_quality_format_text = display_list[0]
+            # print("----------------------------------------@@@@@@@@@@")
+            # print(highest_quality_format_text)
+            # self.quality_combobox.set(highest_quality_format_text)
+            
+            # # Now that the value is set, call the function to update the title
+            # self.on_quality_change(highest_quality_format_text)
+            
+            # self.quality_combobox.configure(state='readonly')
+
+            # --- Set highest quality and update title automatically ---
+            
+            self.quality_combobox.configure(state='readonly')
+            
+            highest_quality_format_text = display_list[0]
+            self.quality_combobox.set(highest_quality_format_text)
+            
+            self.on_quality_change(highest_quality_format_text)
+
+
+            self.download_button.configure(state="normal")
+            self.title_entry.configure(state="normal")
+            self.status_label.configure(text="Select a quality and download.")
+        else:
+            self.status_label.configure(text="No MP4 formats found.")
+            messagebox.showwarning("Warning", "Could not find any MP4 formats.")
+        
+        self.analyze_button.configure(state="normal")
+
+    # def on_quality_change(self, choice):
+    #     selected_value = self.quality_combobox.get()
+    #     selected_format = next((f for f in self.available_formats if f['text'] == selected_value), None)
+    #     if not selected_format: return
+    #     quality_str = f"{selected_format['height']}p"
+    #     new_title = f"{self.original_video_title} - [{quality_str}] - By Chai & Clip"
+    #     self.video_title_var.set(new_title)
+
+
+
+    def on_quality_change(self, choice):
+        selected_value = self.quality_combobox.get()
+        selected_format = next((f for f in self.available_formats if f['text'] == selected_value), None)
+        if not selected_format: return
+        quality_str = f"{selected_format['height']}p"
+        new_title = f"{self.original_video_title} - [{quality_str}] - By Chai & Clip"
+        self.video_title_var.set(new_title)
+
+    def start_download(self):
+        # self.stop_download_flag.clear()
+        self.stop_operation_flag.clear()
+        self.final_filepath = None
+        self.speed_samples.clear()
+        self.download_button.configure(state="disabled")
+        self.analyze_button.configure(state="disabled")
+        self.stop_button.configure(state="normal")
+        self.browse_button.configure(state="disabled")
+        self.progress_bar.set(0)
+        self.progress_label.configure(text="0%")
+        self.status_label.configure(text="Preparing download...")
+        
+        url = self.url_entry.get()
+        path = self.path_var.get()
+        selected_value = self.quality_combobox.get()
+        selected_format = next((f for f in self.available_formats if f['text'] == selected_value), None)
+
+        if not selected_format:
+            messagebox.showerror("Error", "Please select a valid quality.")
+            self.reset_ui()
+            return
+        
+        self.download_thread = threading.Thread(target=self.download_video, args=(url, path, selected_format), daemon=True)
+        self.download_thread.start()
+
+    # def stop_download(self):
+    #     self.status_label.configure(text="Stopping download...")
+    #     self.stop_download_flag.set()
+    #     self.stop_button.configure(state="disabled")
+
+    def stop_operation(self):
+        """Stops the current operation (analysis or download) and resets the UI."""
+        if self.is_animating:
+            self.is_animating = False
+
+        self.status_label.configure(text="Stopping operation...")
+        self.stop_operation_flag.set()
+        self.stop_button.configure(state="disabled")
+
+        # Immediately reset the main UI elements to allow for a new operation
+        self.analyze_button.configure(state="normal")
+        self.browse_button.configure(state="normal")
+        self.status_label.configure(text="Operation cancelled. Ready for new URL.")
+
+    def update_download_progress(self, d):
+        def format_bytes(b):
+            if b is None: return "---";
+            if b < 1024: return f"{b} B";
+            if b < 1024**2: return f"{b/1024:.2f} KiB";
+            if b < 1024**3: return f"{b/1024**2:.2f} MiB";
+            return f"{b/1024**3:.2f} GiB"
+        def format_time(s):
+            if s is None: return "---";
+            mins, secs = divmod(int(s), 60);
+            return f"{mins:02d}:{secs:02d}"
+        # total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
+        # if total_bytes:
+        #     percentage = d['downloaded_bytes'] / total_bytes;
+        #     speed = d.get('speed');
+        #     if speed is not None: self.speed_samples.append(speed)
+        #     avg_speed = sum(self.speed_samples) / len(self.speed_samples) if self.speed_samples else 0
+        total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
+        if total_bytes:
+            percentage = d['downloaded_bytes'] / total_bytes
+            speed = d.get('speed')
+
+            if speed and speed > 0:
+                self.speed_samples.append(speed)
+
+            # avg_speed = sum(self.speed_samples) / len(self.speed_samples) if self.speed_samples else 0
+        
+            # self.progress_bar.set(percentage);
+            # self.progress_label.configure(text=f"{int(percentage*100)}%");
+            # self.size_label.configure(text=f"Size: {format_bytes(total_bytes)}");
+            # self.speed_label.configure(text=f"Speed: {format_bytes(avg_speed)}/s");
+            # self.eta_label.configure(text=f"ETA: {format_time(d.get('eta'))}");
+            # self.status_label.configure(text="Downloading...")
+
+            avg_speed = sum(self.speed_samples) / len(self.speed_samples) if self.speed_samples else 0
+
+        eta_seconds = None
+        if avg_speed > 0:
+            remaining_bytes = total_bytes - d['downloaded_bytes']
+            eta_seconds = remaining_bytes / avg_speed
+
+        self.progress_bar.set(percentage)
+        self.progress_label.configure(text=f"{int(percentage*100)}%")
+        self.size_label.configure(text=f"Size: {format_bytes(total_bytes)}")
+        self.speed_label.configure(text=f"Speed: {format_bytes(avg_speed)}/s")
+        self.eta_label.configure(text=f"ETA: {format_time(eta_seconds)}") 
+        self.status_label.configure(text="Downloading...")
+
+    def progress_hook(self, d):
+        # if self.stop_download_flag.is_set(): raise Exception("Download stopped by user.")
+        if self.stop_operation_flag.is_set(): raise Exception("Download stopped by user.")
+        if d['status'] == 'downloading': self.root.after(0, self.update_download_progress, d)
+        elif d['status'] == 'finished':
+            self.final_filepath = d.get('info_dict', {}).get('filepath')
+            self.root.after(0, lambda: self.status_label.configure(text="Download complete! Finalizing..."))
+
+    def download_video(self, url, path, selected_format):
+        try:
+            ffmpeg_path = os.path.join(self.application_path, "ffmpeg.exe")
+            custom_title = self.video_title_var.get()
+            sanitized_title = re.sub(r'[\\/*?:"<>|]', "", custom_title)
+            format_id = selected_format['format_id']
+            # format_spec = f'{format_id}+bestaudio/best' if not selected_format['is_merged'] else format_id
+            # ydl_opts = {'format': format_spec, 'outtmpl': os.path.join(path, f'{sanitized_title}.%(ext)s'), 'progress_hooks': [self.progress_hook], 'noplaylist': True, 'merge_output_format': 'mp4', 'ffmpeg_location': ffmpeg_path, 'nocolor': True,}
+            format_spec = f'{format_id}+bestaudio/best' if not selected_format['is_merged'] else format_id
+
+            ydl_opts = {
+                'format': format_spec,
+                'outtmpl': os.path.join(path, f'{sanitized_title}.%(ext)s'),
+                'progress_hooks': [self.progress_hook],
+                'noplaylist': True,
+                'merge_output_format': 'mp4',
+                'ffmpeg_location': ffmpeg_path,
+                'nocolor': True,
+            }
+
+            if self.cookie_file_path:
+                ydl_opts['cookiefile'] = self.cookie_file_path
+            # if self.cookie_file_path: ydl_opts['cookiefile'] = self.cookie_file_path
+
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([url])
+            # if not self.stop_download_flag.is_set():
+            if not self.stop_operation_flag.is_set():
+                final_expected_path = os.path.join(path, f"{sanitized_title}.mp4")
+                if os.path.exists(final_expected_path): self.final_filepath = final_expected_path
+                if self.final_filepath: self.root.after(0, self.show_success_dialog, self.final_filepath)
+                else: messagebox.showinfo("Success", "Download completed, but could not verify the final file path.")
+        except Exception as e:
+            if "Download stopped by user" not in str(e):
+                self.status_label.configure(text=f"Error: {str(e)}")
+                messagebox.showerror("Error", f"An error occurred:\n{str(e)}")
+        finally:
+            self.reset_ui()
+
+    def show_success_dialog(self, file_path):
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Success")
+        dialog.geometry("400x150")
+        dialog.resizable(False, False)
+        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        ctk.CTkLabel(main_frame, text="Download completed successfully!", font=("Segoe UI", 16)).pack(pady=10)
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(pady=10)
+        ctk.CTkButton(button_frame, text="Open File", command=lambda: (self.open_path(file_path), dialog.destroy())).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Open Directory", command=lambda: (self.open_path(os.path.dirname(file_path)), dialog.destroy())).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Close", command=dialog.destroy).pack(side="left", padx=5)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+    def open_path(self, path):
+        try:
+            if sys.platform == "win32": os.startfile(path)
+            elif sys.platform == "darwin": subprocess.Popen(["open", path])
+            else: subprocess.Popen(["xdg-open", path])
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open path:\n{e}")
+
+    def reset_ui_after_error(self):
+        """Resets only the UI elements necessary after an analysis error."""
+
+        self.is_animating = False
+
+        self.status_label.configure(text="Analysis failed. Please try again.")
+        self.analyze_button.configure(state="normal")
+        self.quality_combobox.set("Click 'Analyze' to see options")
+        self.quality_combobox.configure(state='disabled')
+        self.title_entry.configure(state='disabled')
+        self.video_title_var.set("")
+
+    def reset_ui(self):
+        self.download_button.configure(state="disabled")
+        self.stop_button.configure(state="disabled")
+        self.browse_button.configure(state="normal")
+        self.analyze_button.configure(state="normal")
+        self.progress_bar.set(0)
+        self.progress_label.configure(text="0%")
+        self.size_label.configure(text="Size: ---")
+        self.speed_label.configure(text="Speed: ---")
+        self.eta_label.configure(text="ETA: ---")
+        self.quality_combobox.set("Click 'Analyze' to see options")
+        self.quality_combobox.configure(state='disabled')
+        self.title_entry.configure(state='disabled')
+        self.video_title_var.set("")
+        # if not self.stop_download_flag.is_set():
+        if not self.stop_operation_flag.is_set():
+             self.status_label.configure(text="Enter a new URL to begin.")
+
+if __name__ == "__main__":
+    if sys.platform == "win32":
+        import ctypes
+        myappid = u'mycompany.chaiandclip.downloader.1'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
+    ctk.set_appearance_mode("dark")
+    ctk.set_default_color_theme("blue")
+    
+    app_root = ctk.CTk()
+    downloader_app = YouTubeDownloader(app_root)
+    app_root.mainloop()
