@@ -20,11 +20,27 @@ class YouTubeDownloader:
         """
         Initializes the application's GUI.
         """
+        # self.root = root
+        # self.root.title("Chai & Clip")
+        # # self.root.geometry("600x600")
+        # self.root.geometry("600x600")
+        # self.root.resizable(False, False)
+
         self.root = root
         self.root.title("Chai & Clip")
-        # self.root.geometry("600x600")
-        self.root.geometry("600x600")
+
+        # --- Center the window on launch ---
+        app_width = 600
+        app_height = 600
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        x = (screen_width / 2) - (app_width / 2)
+        y = 50  # Position 150 pixels down from the top
+
+        self.root.geometry(f"{app_width}x{app_height}+{int(x)}+{int(y)}")
         self.root.resizable(False, False)
+
         # self.thumbnail_image = None
         self.current_thumbnail_label = None
 
