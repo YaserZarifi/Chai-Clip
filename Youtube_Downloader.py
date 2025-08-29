@@ -8,6 +8,8 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from collections import deque
 
+import json
+
 import webbrowser
 
 import requests
@@ -68,7 +70,7 @@ class YouTubeDownloader:
         self.video_title_var = ctk.StringVar()
         self.original_video_title = ""
         self.speed_samples = deque(maxlen=15)
-        self.cookie_file_path = None
+        # self.cookie_file_path = None
         self.is_animating = False
         self.dot_count = 0
 
@@ -77,8 +79,11 @@ class YouTubeDownloader:
 
         self.download_mode = "Video" # Default mode is Video
 
-        self.create_widgets()
+        self.settings_window = None
+        self.settings = self._load_settings()
 
+        self.create_widgets()
+        self._apply_settings()
         self.check_clipboard()
 
     def create_widgets(self):
@@ -92,8 +97,15 @@ class YouTubeDownloader:
         top_bar_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         top_bar_frame.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(top_bar_frame, text="Chai & Clip", font=("Segoe UI", 18, "bold")).pack(side="left")
+        # --- Settings Button ---
+        # Using a placeholder text '⚙' for the gear icon
+        self.settings_button = ctk.CTkButton(top_bar_frame, text="⚙", font=("Segoe UI", 20),
+                                            width=30, height=30, command=self.open_settings_window)
+        self.settings_button.pack(side="right")
         self.cookie_status_label = ctk.CTkLabel(top_bar_frame, text="Status: Not Authenticated", font=("Segoe UI", 10), text_color="gray")
         self.cookie_status_label.pack(side="right", padx=10)
+
+        
 
         # --- URL Input & Analysis ---
         url_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
@@ -218,6 +230,12 @@ class YouTubeDownloader:
 
     def check_clipboard(self):
         """Periodically checks the clipboard and shows a popup if a new YouTube URL is found."""
+
+        # First, check if the feature is enabled in settings
+        if not self.settings.get("clipboard_popup_enabled", True):
+            # If disabled, just reschedule the check and do nothing else.
+            self.root.after(1500, self.check_clipboard)
+            return
         try:
             clipboard_content = self.root.clipboard_get()
             # Check if the content is new
@@ -237,45 +255,6 @@ class YouTubeDownloader:
         self.root.after(1500, self.check_clipboard) # Check every 1.5 seconds
 
 
-    # def show_url_popup(self, url):
-    #     """Creates and shows a small popup to analyze a detected URL."""
-    #     # If a popup already exists, just bring it to the front
-    #     if self.popup_window and self.popup_window.winfo_exists():
-    #         self.popup_window.lift()
-    #         return
-
-    #     self.popup_window = ctk.CTkToplevel(self.root)
-    #     self.popup_window.title("")
-    #     self.popup_window.geometry("350x120")
-    #     self.popup_window.resizable(False, False)
-    #     self.popup_window.transient(self.root)
-
-    #     # Position the popup in the bottom-right corner of the main window
-    #     main_x = self.root.winfo_x()
-    #     main_y = self.root.winfo_y()
-    #     main_w = self.root.winfo_width()
-    #     main_h = self.root.winfo_height()
-    #     self.popup_window.geometry(f"+{main_x + main_w - 360}+{main_y + main_h - 130}")
-
-    #     popup_frame = ctk.CTkFrame(self.popup_window, fg_color="transparent")
-    #     popup_frame.pack(expand=True, fill="both", padx=10, pady=10)
-
-    #     # Display a truncated version of the URL
-    #     display_url = (url[:45] + '...') if len(url) > 45 else url
-    #     ctk.CTkLabel(popup_frame, text="YouTube URL detected in clipboard:", font=("Segoe UI", 12)).pack()
-    #     ctk.CTkLabel(popup_frame, text=display_url, font=("Segoe UI", 10, "italic")).pack(pady=(0, 10))
-
-    #     button_frame = ctk.CTkFrame(popup_frame, fg_color="transparent")
-    #     button_frame.pack()
-
-    #     analyze_button = ctk.CTkButton(button_frame, text="Analyze Now", command=lambda: self.analyze_from_popup(url))
-    #     analyze_button.pack(side="left", padx=5)
-
-    #     dismiss_button = ctk.CTkButton(button_frame, text="Dismiss", fg_color="gray", hover_color="dimgray", command=self.on_popup_close)
-    #     dismiss_button.pack(side="left", padx=5)
-
-    #     self.popup_window.protocol("WM_DELETE_WINDOW", self.on_popup_close)
-    #     self.popup_window.after(100, self.popup_window.lift) # Ensure it appears on top
 
     def show_url_popup(self, url):
         """Creates a bigger, bolder, centered, top-most popup to analyze a detected URL."""
@@ -289,7 +268,6 @@ class YouTubeDownloader:
         # --- MODIFICATION: Make the window always on top ---
         self.popup_window.attributes("-topmost", True)
 
-        # --- MODIFICATION: Increase size and center on the screen ---
         popup_width = 450
         popup_height = 180
         screen_width = self.popup_window.winfo_screenwidth()
@@ -431,92 +409,6 @@ class YouTubeDownloader:
         self.root.after(500, self.animate_status_dots, base_text)
     
 
-    # def load_thumbnail(self, url):
-    #     """Downloads and displays the video thumbnail."""
-
-    #     try:
-    #         response = requests.get(url, stream=True)
-    #         response.raise_for_status()
-            
-    #         image_data = response.content
-    #         raw_image = Image.open(BytesIO(image_data))
-            
-    #         w, h = raw_image.size
-    #         aspect_ratio = h / w
-    #         new_width = 480
-    #         new_height = int(new_width * aspect_ratio)
-
-    #         resized_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
-    #         self.thumbnail_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=(new_width, new_height))
-            
-    #         # --- MODIFICATION: This block is now run on the main thread ---
-    #         def update_ui_with_image():
-    #             # Show the frame
-    #             self.info_frame.pack(fill="x", pady=(15, 5))
-    #             # Set the image AND clear the loading text
-    #             self.thumbnail_label.configure(image=self.thumbnail_image, text="") 
-    #             # Resize the main window dynamically
-    #             self.root.geometry(f"600x{600 + new_height + 40}") # 600 base + image height + padding
-
-    #         self.root.after(0, update_ui_with_image)
-
-    #     except Exception as e:
-    #         print(f"Failed to load thumbnail: {e}")
-    #         def show_error_message():
-    #             # Show the frame to display the error
-    #             self.info_frame.pack(fill="x", pady=(15, 5))
-    #             # Set the error text
-    #             self.thumbnail_label.configure(text="Thumbnail not available", image=None)
-    #             # Ensure window is compact
-    #             self.root.geometry("600x650") 
-
-    #         self.root.after(0, show_error_message)
-
-
-
-
-
-    # def load_thumbnail(self, url):
-    #     """Downloads and prepares the thumbnail in a background thread."""
-    #     try:
-    #         response = requests.get(url, stream=True)
-    #         response.raise_for_status()
-
-    #         image_data = response.content
-    #         raw_image = Image.open(BytesIO(image_data))
-
-    #         w, h = raw_image.size
-    #         aspect_ratio = h / w
-    #         new_width = 480
-    #         new_height = int(new_width * aspect_ratio)
-
-    #         resized_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
-
-    #         # Pass the prepared Pillow image to the main thread for UI updates
-    #         self.root.after(0, self.update_ui_with_thumbnail, resized_image)
-
-    #     except Exception as e:
-    #         print(f"Failed to load thumbnail: {e}")
-    #         # If it fails, pass None to the UI update function
-    #         self.root.after(0, self.update_ui_with_thumbnail, None)
-
-
-    # def update_ui_with_thumbnail(self, pillow_image):
-    #     """Creates the CTkImage and updates the UI from the main thread."""
-    #     if pillow_image:
-    #         # ... (image creation logic is the same) ...
-    #         self.thumbnail_image = ctk.CTkImage(light_image=pillow_image, 
-    #                                         dark_image=pillow_image, 
-    #                                         size=pillow_image.size)
-            
-    #         # Use the new variable name here
-    #         self.current_thumbnail_label.configure(image=self.thumbnail_image, text="") 
-    #         self.root.geometry(f"600x{600 + pillow_image.height + 40}")
-    #     else:
-    #         # And here
-    #         self.current_thumbnail_label.configure(text="Thumbnail not available", image=None)
-    #         self.root.geometry("600x650")
-
     def update_ui_with_results(self, info, pillow_image):
         """Updates the entire UI at once when all data is ready."""
         self.is_animating = False
@@ -601,98 +493,6 @@ class YouTubeDownloader:
 
         self.analyze_button.configure(state="normal")
 
-
-
-
-
-    # def fetch_qualities(self, url):
-    #     info = None
-    #     pillow_image = None
-
-    #     try:
-    #         # --- Tier 1: Metadata Fetch ---
-    #         with yt_dlp.YoutubeDL({'noplaylist': True, 'quiet': True}) as ydl:
-    #             info = ydl.extract_info(url, download=False)
-
-    #         if self.stop_operation_flag.is_set(): return
-
-    #         # --- Tier 2: Thumbnail Fetch (in the same thread) ---
-    #         if info:
-    #             thumbnail_url = info.get('thumbnail')
-    #             if thumbnail_url:
-    #                 try:
-    #                     response = requests.get(thumbnail_url, stream=True)
-    #                     response.raise_for_status()
-    #                     image_data = response.content
-    #                     raw_image = Image.open(BytesIO(image_data))
-
-    #                     w, h = raw_image.size
-    #                     aspect_ratio = h / w
-    #                     new_width = 480
-    #                     new_height = int(new_width * aspect_ratio)
-    #                     pillow_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
-    #                 except Exception as e:
-    #                     print(f"Failed to load thumbnail: {e}")
-
-    #     except yt_dlp.utils.DownloadError as e:
-    #         if self.stop_operation_flag.is_set(): return
-    #         error_message = str(e).lower()
-
-    #         blocking_errors = ["sign in to confirm you're not a bot", "http error 429", "too many requests", "winerror 10054", "forcibly closed by the remote host"]
-    #         private_video_errors = ["private video", "video unavailable"]
-    #         invalid_url_errors = ["is not a valid url"]
-
-    #         if any(err in error_message for err in invalid_url_errors):
-    #             self.root.after(0, lambda: messagebox.showerror("Invalid URL", "The URL you entered does not appear to be a valid YouTube link."))
-    #             self.root.after(0, self.reset_ui_after_error)
-    #             return
-
-    #         if any(err in error_message for err in private_video_errors):
-    #             self.root.after(0, lambda: messagebox.showerror("Video Not Found", "This video is private, has been deleted, or is otherwise unavailable."))
-    #             self.root.after(0, self.reset_ui_after_error)
-    #             return
-
-    #         if any(err in error_message for err in blocking_errors):
-    #             # --- Tier 2: Try with browser cookies ---
-    #             browsers = ['chrome', 'firefox', 'edge', 'opera', 'brave']
-    #             for browser in browsers:
-    #                 if self.stop_operation_flag.is_set(): return
-    #                 try:
-    #                     ydl_opts_cookies = {'noplaylist': True, 'quiet': True, 'cookiesfrombrowser': (browser,)}
-    #                     with yt_dlp.YoutubeDL(ydl_opts_cookies) as ydl:
-    #                         info = ydl.extract_info(url, download=False)
-    #                     print(f"Successfully extracted info using {browser} cookies.")
-    #                     break 
-    #                 except Exception as browser_e:
-    #                     print(f"Could not get info with {browser} cookies: {browser_e}.")
-    #                     info = None
-
-    #             if self.stop_operation_flag.is_set(): return
-    #             error_message = str(e).lower()
-
-    #             if not info:
-    #                 self.root.after(0, self.show_cookie_error_dialog)
-    #                 self.root.after(0, self.reset_ui_after_error)
-    #                 return
-    #         else:
-    #             if self.stop_operation_flag.is_set(): return
-    #             self.root.after(0, lambda: messagebox.showerror("Connection Error", "Could not connect to YouTube. Please check your internet connection and try again."))
-    #             self.root.after(0, self.reset_ui_after_error)
-    #             return
-
-    #     except Exception as e:
-    #         if self.stop_operation_flag.is_set(): return
-    #         self.root.after(0, lambda: messagebox.showerror("An Unexpected Error Occurred", f"An unknown error occurred. Please restart the application and try again.\n\nDetails: {str(e)}"))
-    #         self.root.after(0, self.reset_ui_after_error)
-    #         return
-
-    #     if self.stop_operation_flag.is_set(): return
-
-    #     if not info:
-    #         self.root.after(0, self.reset_ui_after_error)
-    #         return
-
-    #     self.root.after(0, self.update_ui_after_analysis, info)
 
 
     def fetch_qualities(self, url):
@@ -783,22 +583,6 @@ class YouTubeDownloader:
         # --- Final Step: Call the main UI updater with all data ready ---
         self.root.after(0, self.update_ui_with_results, info, pillow_image)
 
-    # def fetch_with_cookies(self):
-    #     """A specific fetcher that ONLY uses the manually imported cookie file."""
-    #     url = self.url_entry.get()
-    #     if not self.cookie_file_path or not os.path.exists(self.cookie_file_path):
-    #         messagebox.showerror("Error", "Cookie file not found or not specified.")
-    #         self.reset_ui_after_error()
-    #         return
-            
-    #     try:
-    #         ydl_opts = {'noplaylist': True, 'quiet': True, 'cookiefile': self.cookie_file_path}
-    #         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-    #             info = ydl.extract_info(url, download=False)
-    #         self.root.after(0, self.update_ui_after_analysis, info)
-    #     except Exception as e:
-    #         messagebox.showerror("Analysis with Cookies Failed", f"Could not analyze the video using the provided cookies.\n\nError: {e}")
-    #         self.root.after(0, self.reset_ui_after_error)
 
 
     def fetch_with_cookies(self):
@@ -844,106 +628,6 @@ class YouTubeDownloader:
             return
 
         self.root.after(0, self.update_ui_with_results, info, pillow_image)
-
-
-
-    # def update_ui_after_analysis(self, info):
-    #     """Safely updates the UI with fetched video info from the main thread."""
-    #     self.is_animating = False
-        
-    #     # --- NEW SOLUTION: Destroy the old label completely ---
-    #     if self.current_thumbnail_label:
-    #         self.current_thumbnail_label.destroy()
-    #         self.current_thumbnail_label = None
-        
-    #     self.info_frame.pack_forget()
-    #     self.root.geometry("600x600")
-    #     # --- END NEW SOLUTION ---
-
-    #     thumbnail_url = info.get('thumbnail')
-    #     uploader_name = f"Uploader: {info.get('uploader', 'N/A')}"
-    #     self.uploader_label.configure(text=uploader_name)
-
-    #     # Create a brand new label for the new thumbnail
-    #     self.current_thumbnail_label = ctk.CTkLabel(self.info_frame, text="Loading thumbnail...")
-    #     # Pack the container frame to make the "Loading..." text visible
-    #     self.info_frame.pack(fill="x", pady=(15, 5))
-    #     self.current_thumbnail_label.pack()
-        
-    #     if thumbnail_url:
-    #         threading.Thread(target=self.load_thumbnail, args=(thumbnail_url,), daemon=True).start()
-    #     else:
-    #         # If no URL, pass None to the UI updater to show an error
-    #         self.root.after(0, self.update_ui_with_thumbnail, None)
-
-
-    #     self.original_video_title = info.get('title', 'Untitled Video')
-    #     self.available_formats = []
-    #     formats = info.get('formats', [])
-    #     for f in formats:
-    #         if f.get('ext') == 'mp4' and f.get('vcodec') != 'none':
-    #             filesize_mb = f.get('filesize') or f.get('filesize_approx')
-    #             filesize_str = f"{filesize_mb / (1024*1024):.2f} MB" if filesize_mb else "N/A"
-    #             if f.get('acodec') != 'none':
-    #                 display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str}"
-    #                 is_merged = True
-    #             else:
-    #                 display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str} (Requires FFmpeg)"
-    #                 is_merged = False
-    #             self.available_formats.append({'text': display_text, 'format_id': f['format_id'], 'is_merged': is_merged, 'height': f.get('height', 0)})
-        
-    #     if self.available_formats:
-    #         self.available_formats.sort(key=lambda x: x['height'], reverse=True)
-    #         display_list = [f['text'] for f in self.available_formats]
-    #         self.quality_combobox.configure(values=display_list)
-            
-    #         # Get the highest quality format object (the first one after sorting)
-    #         highest_quality_format = self.available_formats[0]
-            
-    #         # Set the combobox to display the text of the highest quality format
-    #         self.quality_combobox.set(highest_quality_format['text'])
-            
-    #         # Directly update the video title based on this default highest quality
-    #         quality_str = f"{highest_quality_format['height']}p"
-    #         initial_title = f"{self.original_video_title} - [{quality_str}] - By Chai & Clip"
-    #         self.video_title_var.set(initial_title)
-
-    #         # highest_quality_format_text = display_list[0]
-    #         # print("----------------------------------------@@@@@@@@@@")
-    #         # print(highest_quality_format_text)
-    #         # self.quality_combobox.set(highest_quality_format_text)
-            
-    #         # # Now that the value is set, call the function to update the title
-    #         # self.on_quality_change(highest_quality_format_text)
-            
-    #         # self.quality_combobox.configure(state='readonly')
-
-    #         # --- Set highest quality and update title automatically ---
-            
-    #         self.quality_combobox.configure(state='readonly')
-            
-    #         highest_quality_format_text = display_list[0]
-    #         self.quality_combobox.set(highest_quality_format_text)
-            
-    #         self.on_quality_change(highest_quality_format_text)
-
-
-    #         self.download_button.configure(state="normal")
-    #         self.title_entry.configure(state="normal")
-    #         self.status_label.configure(text="Select a quality and download.")
-    #     else:
-    #         self.status_label.configure(text="No MP4 formats found.")
-    #         messagebox.showwarning("Warning", "Could not find any MP4 formats.")
-        
-    #     self.analyze_button.configure(state="normal")
-
-    # def on_quality_change(self, choice):
-    #     selected_value = self.quality_combobox.get()
-    #     selected_format = next((f for f in self.available_formats if f['text'] == selected_value), None)
-    #     if not selected_format: return
-    #     quality_str = f"{selected_format['height']}p"
-    #     new_title = f"{self.original_video_title} - [{quality_str}] - By Chai & Clip"
-    #     self.video_title_var.set(new_title)
 
 
 
@@ -1268,13 +952,137 @@ class YouTubeDownloader:
             print(f"Failed to open mailto link: {e}")
 
 
+    
+    def _load_settings(self):
+        """Loads settings from config.json, with defaults for missing values."""
+        defaults = {
+            "theme": "System",
+            "download_path": os.path.join(os.path.expanduser('~'), 'Downloads'),
+            "default_mode": "Video",
+            "clipboard_popup_enabled": True
+        }
+        try:
+            with open("config.json", "r") as f:
+                settings = json.load(f)
+                # Ensure all keys from defaults are present
+                for key, value in defaults.items():
+                    settings.setdefault(key, value)
+                return settings
+        except (FileNotFoundError, json.JSONDecodeError):
+            return defaults
+
+    def _save_settings(self):
+        """Saves the current settings to config.json."""
+        with open("config.json", "w") as f:
+            json.dump(self.settings, f, indent=4)
+
+    def open_settings_window(self):
+        """Opens the settings window."""
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            return
+
+        self.settings_window = ctk.CTkToplevel(self.root)
+        self.settings_window.title("Settings")
+        # --- Center the settings window ---
+        popup_width = 500
+        popup_height = 320
+        screen_width = self.settings_window.winfo_screenwidth()
+        screen_height = self.settings_window.winfo_screenheight()
+        x = (screen_width / 2) - (popup_width / 2)
+        y = (screen_height / 2) - (popup_height / 2)
+        self.settings_window.geometry(f"{popup_width}x{popup_height}+{int(x)}+{int(y)}")
+        
+        self.settings_window.resizable(False, False)
+        self.settings_window.transient(self.root)
+
+        settings_frame = ctk.CTkFrame(self.settings_window)
+        settings_frame.pack(expand=True, fill="both", padx=15, pady=15)
+
+        # --- Theme Setting ---
+        theme_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        theme_frame.pack(fill="x", pady=10)
+        ctk.CTkLabel(theme_frame, text="Appearance Theme:", font=("Segoe UI", 14)).pack(side="left")
+
+        theme_menu = ctk.CTkOptionMenu(theme_frame, values=["Light", "Dark", "System"],
+                                    command=lambda theme: self.settings.update({"theme": theme}))
+        theme_menu.set(self.settings["theme"])
+        theme_menu.pack(side="right")
+
+        # --- Default Mode Setting ---
+        mode_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        mode_frame.pack(fill="x", pady=10)
+        ctk.CTkLabel(mode_frame, text="Default Start Mode:", font=("Segoe UI", 14)).pack(side="left")
+
+        mode_selector_settings = ctk.CTkSegmentedButton(mode_frame, values=["Video", "Audio"],
+                                                        font=("Segoe UI", 12, "bold"))
+        mode_selector_settings.set(self.settings["default_mode"])
+        mode_selector_settings.pack(side="right")
+
+        # --- Clipboard Popup Setting ---
+        clipboard_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        clipboard_frame.pack(fill="x", pady=10)
+        ctk.CTkLabel(clipboard_frame, text="Clipboard URL Popup:", font=("Segoe UI", 14)).pack(side="left")
+
+        clipboard_switch = ctk.CTkSwitch(clipboard_frame, text="", width=0)
+        if self.settings["clipboard_popup_enabled"]:
+            clipboard_switch.select()  # Turn the switch on if the setting is True
+        clipboard_switch.pack(side="right")
+
+        # --- Download Path Setting ---
+        path_frame = ctk.CTkFrame(settings_frame, fg_color="transparent")
+        path_frame.pack(fill="x", pady=10)
+        ctk.CTkLabel(path_frame, text="Default Download Path:", font=("Segoe UI", 14)).pack(side="left")
+
+        def browse_new_path():
+            directory = filedialog.askdirectory()
+            if directory:
+                path_entry.delete(0, 'end')
+                path_entry.insert(0, directory)
+
+        path_entry = ctk.CTkEntry(path_frame, font=("Segoe UI", 12))
+        path_entry.insert(0, self.settings["download_path"])
+        path_entry.pack(side="left", expand=True, fill="x", padx=(10, 5))
+
+        browse_btn = ctk.CTkButton(path_frame, text="Browse...", width=80, command=browse_new_path)
+        browse_btn.pack(side="left")
+
+        # --- Save and Close Button ---
+        def save_and_close():
+
+            # Update settings from UI elements
+            self.settings["theme"] = theme_menu.get()
+            self.settings["download_path"] = path_entry.get()
+            self.settings["default_mode"] = mode_selector_settings.get()
+            self.settings["clipboard_popup_enabled"] = bool(clipboard_switch.get())
+
+
+            self._save_settings()
+            self._apply_settings() # Apply settings immediately
+            self.settings_window.destroy()
+
+        save_button = ctk.CTkButton(settings_frame, text="Save and Close", command=save_and_close, height=40)
+        save_button.pack(side="bottom", pady=20)
+
+        self.settings_window.protocol("WM_DELETE_WINDOW", save_and_close) # Also save on closing with 'X'
+
+    def _apply_settings(self):
+        """Applies the loaded settings to the application."""
+        ctk.set_appearance_mode(self.settings["theme"])
+        self.path_var.set(self.settings["download_path"])
+
+        default_mode = self.settings["default_mode"]
+        self.mode_selector.set(default_mode)
+        self.download_mode = default_mode
+
 if __name__ == "__main__":
     if sys.platform == "win32":
         import ctypes
         myappid = u'mycompany.chaiandclip.downloader.1'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
-    ctk.set_appearance_mode("dark")
+    # ctk.set_appearance_mode("dark")
+
     ctk.set_default_color_theme("blue")
     
     app_root = ctk.CTk()
