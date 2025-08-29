@@ -75,6 +75,8 @@ class YouTubeDownloader:
         self.last_clipboard_url = ""
         self.popup_window = None
 
+        self.download_mode = "Video" # Default mode is Video
+
         self.create_widgets()
 
         self.check_clipboard()
@@ -112,6 +114,18 @@ class YouTubeDownloader:
 
         self.analyze_button = ctk.CTkButton(url_frame, text="Analyze", command=self.start_fetch_thread, height=35, width=80)
         self.analyze_button.pack(side="left")
+
+        # --- Download Mode Selector ---
+        mode_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        mode_frame.pack(pady=10, fill="x")
+
+        ctk.CTkLabel(mode_frame, text="Download Mode:", font=("Segoe UI", 14)).pack(side="left", padx=(0, 10))
+
+        self.mode_selector = ctk.CTkSegmentedButton(mode_frame, values=["Video", "Audio"],
+                                                    command=self._on_mode_change,
+                                                    font=("Segoe UI", 12, "bold"))
+        self.mode_selector.set("Video") # Set default value
+        self.mode_selector.pack(side="left", expand=True, fill="x")
 
 
         # --- Thumbnail & Uploader Info ---
@@ -570,6 +584,11 @@ class YouTubeDownloader:
             self.available_formats.sort(key=lambda x: x['height'], reverse=True)
             display_list = [f['text'] for f in self.available_formats]
             self.quality_combobox.configure(values=display_list, state='readonly')
+
+            if self.download_mode == "Audio":
+                self.quality_combobox.configure(state="disabled")
+
+
             highest_quality_text = display_list[0]
             self.quality_combobox.set(highest_quality_text)
             self.on_quality_change(highest_quality_text)
@@ -929,12 +948,43 @@ class YouTubeDownloader:
 
 
     def on_quality_change(self, choice):
-        selected_value = self.quality_combobox.get()
-        selected_format = next((f for f in self.available_formats if f['text'] == selected_value), None)
-        if not selected_format: return
-        quality_str = f"{selected_format['height']}p"
-        new_title = f"{self.original_video_title} - [{quality_str}] - By Chai & Clip"
+        """Updates the filename when quality or mode changes."""
+        if not self.original_video_title:
+            return
+
+        if self.download_mode == "Video":
+            selected_value = self.quality_combobox.get()
+            selected_format = next((f for f in self.available_formats if f['text'] == selected_value), None)
+            if not selected_format: return
+            quality_str = f"{selected_format['height']}p"
+            new_title = f"{self.original_video_title} - [{quality_str}] - By NavaGir"
+        else: # Audio mode
+            new_title = f"{self.original_video_title} - [Audio] - By NavaGir"
+
         self.video_title_var.set(new_title)
+
+
+
+    def _on_mode_change(self, selected_mode: str):
+        """Called when the user switches between Video and Audio mode."""
+        self.download_mode = selected_mode
+
+        # If no video has been analyzed yet, do nothing further
+        if not self.original_video_title:
+            return
+
+        if selected_mode == "Audio":
+            # Disable quality selection for audio
+            self.quality_combobox.configure(state="disabled")
+            self.status_label.configure(text="Audio mode: Highest quality will be downloaded as MP3.")
+        else: # Video mode
+            # Re-enable quality selection
+            self.quality_combobox.configure(state="readonly")
+            self.status_label.configure(text="Select a quality and download.")
+
+        # Update the title to reflect the new mode and extension
+        self.on_quality_change(None)
+
 
     def start_download(self):
         # self.stop_download_flag.clear()
@@ -1039,37 +1089,54 @@ class YouTubeDownloader:
 
     def download_video(self, url, path, selected_format):
         try:
-            # ffmpeg_path = os.path.join(self.application_path, "ffmpeg.exe")
             ffmpeg_path = os.path.join(self.application_path, "assets", "ffmpeg.exe")
             custom_title = self.video_title_var.get()
             sanitized_title = re.sub(r'[\\/*?:"<>|]', "", custom_title)
-            format_id = selected_format['format_id']
-            # format_spec = f'{format_id}+bestaudio/best' if not selected_format['is_merged'] else format_id
-            # ydl_opts = {'format': format_spec, 'outtmpl': os.path.join(path, f'{sanitized_title}.%(ext)s'), 'progress_hooks': [self.progress_hook], 'noplaylist': True, 'merge_output_format': 'mp4', 'ffmpeg_location': ffmpeg_path, 'nocolor': True,}
-            format_spec = f'{format_id}+bestaudio/best' if not selected_format['is_merged'] else format_id
 
             ydl_opts = {
-                'format': format_spec,
-                'outtmpl': os.path.join(path, f'{sanitized_title}.%(ext)s'),
                 'progress_hooks': [self.progress_hook],
                 'noplaylist': True,
-                'merge_output_format': 'mp4',
                 'ffmpeg_location': ffmpeg_path,
                 'nocolor': True,
             }
 
             if self.cookie_file_path:
                 ydl_opts['cookiefile'] = self.cookie_file_path
-            # if self.cookie_file_path: ydl_opts['cookiefile'] = self.cookie_file_path
 
+            # --- NEW: Logic for Video vs Audio Download ---
+            if self.download_mode == "Video":
+                selected_format = next((f for f in self.available_formats if f['text'] == self.quality_combobox.get()), None)
+                format_id = selected_format['format_id']
+                format_spec = f'{format_id}+bestaudio/best' if not selected_format['is_merged'] else format_id
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([url])
-            # if not self.stop_download_flag.is_set():
+                ydl_opts['format'] = format_spec
+                ydl_opts['outtmpl'] = os.path.join(path, f'{sanitized_title}.%(ext)s')
+                ydl_opts['merge_output_format'] = 'mp4'
+                final_extension = 'mp4'
+
+            else: # Audio Mode
+                ydl_opts['format'] = 'bestaudio/best'
+                ydl_opts['outtmpl'] = os.path.join(path, f'{sanitized_title}.%(ext)s')
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192', # Standard high quality
+                }]
+                final_extension = 'mp3'
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
             if not self.stop_operation_flag.is_set():
-                final_expected_path = os.path.join(path, f"{sanitized_title}.mp4")
-                if os.path.exists(final_expected_path): self.final_filepath = final_expected_path
-                if self.final_filepath: self.root.after(0, self.show_success_dialog, self.final_filepath)
-                else: messagebox.showinfo("Success", "Download completed, but could not verify the final file path.")
+                final_expected_path = os.path.join(path, f"{sanitized_title}.{final_extension}")
+                if os.path.exists(final_expected_path):
+                    self.final_filepath = final_expected_path
+
+                if self.final_filepath:
+                    self.root.after(0, self.show_success_dialog, self.final_filepath)
+                else:
+                    messagebox.showinfo("Success", f"Download completed, but could not verify the final file path: {final_expected_path}")
+
         except Exception as e:
             if "Download stopped by user" not in str(e):
                 self.status_label.configure(text=f"Error: {str(e)}")
@@ -1161,6 +1228,11 @@ class YouTubeDownloader:
         self.thumbnail_image = None # This variable is still used, so clear it
 
 
+                # Reset download mode
+        self.mode_selector.set("Video")
+        self.download_mode = "Video"
+
+
     def clear_interface(self):
         """Clears the URL entry and resets the entire UI to its initial state."""
         self.url_entry.delete(0, 'end')
@@ -1172,6 +1244,10 @@ class YouTubeDownloader:
 
         self.reset_ui()
         self.status_label.configure(text="Enter a YouTube URL to begin.")
+
+        # Reset download mode
+        self.mode_selector.set("Video")
+        self.download_mode = "Video"
 
 
 
