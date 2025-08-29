@@ -8,6 +8,10 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from collections import deque
 
+import requests
+from PIL import Image
+from io import BytesIO
+
 class YouTubeDownloader:
     """
     A modern GUI application for downloading YouTube videos using customtkinter.
@@ -18,8 +22,11 @@ class YouTubeDownloader:
         """
         self.root = root
         self.root.title("Chai & Clip")
+        # self.root.geometry("600x600")
         self.root.geometry("600x600")
         self.root.resizable(False, False)
+        # self.thumbnail_image = None
+        self.current_thumbnail_label = None
 
         # --- Set App Icon ---
         try:
@@ -69,6 +76,17 @@ class YouTubeDownloader:
         self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 10))
         self.analyze_button = ctk.CTkButton(url_frame, text="Analyze", command=self.start_fetch_thread, height=35, width=80)
         self.analyze_button.pack(side="left")
+
+
+        # --- Thumbnail & Uploader Info ---
+        self.info_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        # self.info_frame.pack(fill="x", pady=(15, 5))
+
+        # self.thumbnail_label = ctk.CTkLabel(self.info_frame, text="", height=270) # Placeholder for thumbnail
+        # self.thumbnail_label.pack()
+
+        self.uploader_label = ctk.CTkLabel(self.info_frame, text="", font=("Segoe UI", 12, "italic")) # Placeholder for uploader
+        self.uploader_label.pack(pady=(5, 0))
 
         # --- Video Title Input ---
         title_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
@@ -219,6 +237,97 @@ class YouTubeDownloader:
         self.status_label.configure(text=f"{base_text} {dots.ljust(3)}")
         
         self.root.after(500, self.animate_status_dots, base_text)
+    
+
+    # def load_thumbnail(self, url):
+    #     """Downloads and displays the video thumbnail."""
+
+    #     try:
+    #         response = requests.get(url, stream=True)
+    #         response.raise_for_status()
+            
+    #         image_data = response.content
+    #         raw_image = Image.open(BytesIO(image_data))
+            
+    #         w, h = raw_image.size
+    #         aspect_ratio = h / w
+    #         new_width = 480
+    #         new_height = int(new_width * aspect_ratio)
+
+    #         resized_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
+    #         self.thumbnail_image = ctk.CTkImage(light_image=resized_image, dark_image=resized_image, size=(new_width, new_height))
+            
+    #         # --- MODIFICATION: This block is now run on the main thread ---
+    #         def update_ui_with_image():
+    #             # Show the frame
+    #             self.info_frame.pack(fill="x", pady=(15, 5))
+    #             # Set the image AND clear the loading text
+    #             self.thumbnail_label.configure(image=self.thumbnail_image, text="") 
+    #             # Resize the main window dynamically
+    #             self.root.geometry(f"600x{600 + new_height + 40}") # 600 base + image height + padding
+
+    #         self.root.after(0, update_ui_with_image)
+
+    #     except Exception as e:
+    #         print(f"Failed to load thumbnail: {e}")
+    #         def show_error_message():
+    #             # Show the frame to display the error
+    #             self.info_frame.pack(fill="x", pady=(15, 5))
+    #             # Set the error text
+    #             self.thumbnail_label.configure(text="Thumbnail not available", image=None)
+    #             # Ensure window is compact
+    #             self.root.geometry("600x650") 
+
+    #         self.root.after(0, show_error_message)
+
+
+
+
+
+    def load_thumbnail(self, url):
+        """Downloads and prepares the thumbnail in a background thread."""
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+
+            image_data = response.content
+            raw_image = Image.open(BytesIO(image_data))
+
+            w, h = raw_image.size
+            aspect_ratio = h / w
+            new_width = 480
+            new_height = int(new_width * aspect_ratio)
+
+            resized_image = raw_image.resize((new_width, new_height), Image.LANCZOS)
+
+            # Pass the prepared Pillow image to the main thread for UI updates
+            self.root.after(0, self.update_ui_with_thumbnail, resized_image)
+
+        except Exception as e:
+            print(f"Failed to load thumbnail: {e}")
+            # If it fails, pass None to the UI update function
+            self.root.after(0, self.update_ui_with_thumbnail, None)
+
+
+    def update_ui_with_thumbnail(self, pillow_image):
+        """Creates the CTkImage and updates the UI from the main thread."""
+        if pillow_image:
+            # ... (image creation logic is the same) ...
+            self.thumbnail_image = ctk.CTkImage(light_image=pillow_image, 
+                                            dark_image=pillow_image, 
+                                            size=pillow_image.size)
+            
+            # Use the new variable name here
+            self.current_thumbnail_label.configure(image=self.thumbnail_image, text="") 
+            self.root.geometry(f"600x{600 + pillow_image.height + 40}")
+        else:
+            # And here
+            self.current_thumbnail_label.configure(text="Thumbnail not available", image=None)
+            self.root.geometry("600x650")
+
+
+
+
 
 
     def fetch_qualities(self, url):
@@ -314,8 +423,32 @@ class YouTubeDownloader:
 
     def update_ui_after_analysis(self, info):
         """Safely updates the UI with fetched video info from the main thread."""
-
         self.is_animating = False
+        
+        # --- NEW SOLUTION: Destroy the old label completely ---
+        if self.current_thumbnail_label:
+            self.current_thumbnail_label.destroy()
+            self.current_thumbnail_label = None
+        
+        self.info_frame.pack_forget()
+        self.root.geometry("600x600")
+        # --- END NEW SOLUTION ---
+
+        thumbnail_url = info.get('thumbnail')
+        uploader_name = f"Uploader: {info.get('uploader', 'N/A')}"
+        self.uploader_label.configure(text=uploader_name)
+
+        # Create a brand new label for the new thumbnail
+        self.current_thumbnail_label = ctk.CTkLabel(self.info_frame, text="Loading thumbnail...")
+        # Pack the container frame to make the "Loading..." text visible
+        self.info_frame.pack(fill="x", pady=(15, 5))
+        self.current_thumbnail_label.pack()
+        
+        if thumbnail_url:
+            threading.Thread(target=self.load_thumbnail, args=(thumbnail_url,), daemon=True).start()
+        else:
+            # If no URL, pass None to the UI updater to show an error
+            self.root.after(0, self.update_ui_with_thumbnail, None)
 
 
         self.original_video_title = info.get('title', 'Untitled Video')
@@ -572,6 +705,23 @@ class YouTubeDownloader:
         self.title_entry.configure(state='disabled')
         self.video_title_var.set("")
 
+        # Hide the info frame and shrink the window
+        self.info_frame.pack_forget()
+        self.root.geometry("600x600")
+        
+        # --- NEW Reset Logic ---
+        if self.current_thumbnail_label:
+            self.current_thumbnail_label.destroy()
+            self.current_thumbnail_label = None
+
+        self.info_frame.pack_forget()
+        self.root.geometry("600x600")
+        
+        self.uploader_label.configure(text="")
+        self.thumbnail_image = None # This variable is still used, so clear it
+
+
+
     def reset_ui(self):
         self.download_button.configure(state="disabled")
         self.stop_button.configure(state="disabled")
@@ -589,6 +739,18 @@ class YouTubeDownloader:
         # if not self.stop_download_flag.is_set():
         if not self.stop_operation_flag.is_set():
              self.status_label.configure(text="Enter a new URL to begin.")
+             
+
+        # --- NEW Reset Logic ---
+        if self.current_thumbnail_label:
+            self.current_thumbnail_label.destroy()
+            self.current_thumbnail_label = None
+
+        self.info_frame.pack_forget()
+        self.root.geometry("600x600")
+        
+        self.uploader_label.configure(text="")
+        self.thumbnail_image = None # This variable is still used, so clear it
 
 if __name__ == "__main__":
     if sys.platform == "win32":
