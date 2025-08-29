@@ -8,6 +8,8 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from collections import deque
 
+import webbrowser
+
 import requests
 from PIL import Image
 from io import BytesIO
@@ -47,11 +49,12 @@ class YouTubeDownloader:
         # --- Set App Icon ---
         try:
             if getattr(sys, 'frozen', False):
-                self.application_path = os.path.dirname(sys.executable)
+        # If the application is run as a bundled executable, the path is in sys._MEIPASS
+                self.application_path = sys._MEIPASS
             else:
                 self.application_path = os.path.dirname(os.path.abspath(__file__))
+                icon_path = os.path.join(self.application_path, "assets", "logo.ico")
             
-            icon_path = os.path.join(self.application_path, "logo.ico")
             if os.path.exists(icon_path):
                 self.root.iconbitmap(icon_path)
         except Exception as e:
@@ -94,8 +97,19 @@ class YouTubeDownloader:
         url_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         url_frame.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(url_frame, text="YouTube URL:", font=("Segoe UI", 14)).pack(side="left")
+        # self.url_entry = ctk.CTkEntry(url_frame, font=("Segoe UI", 12), height=35)
+        # self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 10))
+        # self.analyze_button = ctk.CTkButton(url_frame, text="Analyze", command=self.start_fetch_thread, height=35, width=80)
+        # self.analyze_button.pack(side="left")
+
+
         self.url_entry = ctk.CTkEntry(url_frame, font=("Segoe UI", 12), height=35)
-        self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 10))
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 5)) # Reduced padding
+
+        self.clear_button = ctk.CTkButton(url_frame, text="Clear", command=self.clear_interface, 
+                                        height=35, width=60, fg_color="gray", hover_color="dimgray")
+        self.clear_button.pack(side="left", padx=(0, 5))
+
         self.analyze_button = ctk.CTkButton(url_frame, text="Analyze", command=self.start_fetch_thread, height=35, width=80)
         self.analyze_button.pack(side="left")
 
@@ -169,6 +183,19 @@ class YouTubeDownloader:
         
         self.status_label = ctk.CTkLabel(main_frame, text="Enter a YouTube URL to begin.", font=("Segoe UI", 12, 'italic'))
         self.status_label.pack(pady=(10, 0))
+
+                # --- Footer ---
+        footer_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        footer_frame.pack(side="bottom", fill="x", pady=(10, 0))
+
+        # "Developed by" Label
+        ctk.CTkLabel(footer_frame, text="Developed by YaserZarifi", font=("Segoe UI", 10, "italic"), text_color="gray").pack(side="left", padx=10)
+
+        # "Send Feedback" Link
+        feedback_font = ctk.CTkFont(family="Segoe UI", size=10, underline=True)
+        feedback_label = ctk.CTkLabel(footer_frame, text="Send Feedback", font=feedback_font, text_color="#5cb8f2", cursor="hand2")
+        feedback_label.pack(side="right", padx=10)
+        feedback_label.bind("<Button-1>", lambda e: self.open_feedback_link())
 
 
 
@@ -510,16 +537,35 @@ class YouTubeDownloader:
         self.original_video_title = info.get('title', 'Untitled Video')
         self.available_formats = []
         formats = info.get('formats', [])
+        # for f in formats:
+        #     if f.get('ext') == 'mp4' and f.get('vcodec') != 'none':
+        #         filesize_mb = f.get('filesize') or f.get('filesize_approx')
+        #         filesize_str = f"{filesize_mb / (1024*1024):.2f} MB" if filesize_mb else "N/A"
+        #         if f.get('acodec') != 'none':
+        #             display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str}"
+        #         else:
+        #             display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str} (Requires FFmpeg)"
+        #         self.available_formats.append({'text': display_text, 'height': f.get('height', 0)})
+
         for f in formats:
             if f.get('ext') == 'mp4' and f.get('vcodec') != 'none':
                 filesize_mb = f.get('filesize') or f.get('filesize_approx')
                 filesize_str = f"{filesize_mb / (1024*1024):.2f} MB" if filesize_mb else "N/A"
-                if f.get('acodec') != 'none':
+
+                is_merged = f.get('acodec') != 'none'
+
+                if is_merged:
                     display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str}"
                 else:
                     display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str} (Requires FFmpeg)"
-                self.available_formats.append({'text': display_text, 'height': f.get('height', 0)})
 
+                # --- FIX: Add the missing data back into the dictionary ---
+                self.available_formats.append({
+                    'text': display_text, 
+                    'height': f.get('height', 0),
+                    'format_id': f['format_id'], 
+                    'is_merged': is_merged
+                })
         if self.available_formats:
             self.available_formats.sort(key=lambda x: x['height'], reverse=True)
             display_list = [f['text'] for f in self.available_formats]
@@ -993,7 +1039,8 @@ class YouTubeDownloader:
 
     def download_video(self, url, path, selected_format):
         try:
-            ffmpeg_path = os.path.join(self.application_path, "ffmpeg.exe")
+            # ffmpeg_path = os.path.join(self.application_path, "ffmpeg.exe")
+            ffmpeg_path = os.path.join(self.application_path, "assets", "ffmpeg.exe")
             custom_title = self.video_title_var.get()
             sanitized_title = re.sub(r'[\\/*?:"<>|]', "", custom_title)
             format_id = selected_format['format_id']
@@ -1112,6 +1159,38 @@ class YouTubeDownloader:
         
         self.uploader_label.configure(text="")
         self.thumbnail_image = None # This variable is still used, so clear it
+
+
+    def clear_interface(self):
+        """Clears the URL entry and resets the entire UI to its initial state."""
+        self.url_entry.delete(0, 'end')
+        self.last_clipboard_url = "" # Reset clipboard tracking
+
+        # Stop any ongoing operations like analysis
+        if self.is_animating:
+            self.stop_operation()
+
+        self.reset_ui()
+        self.status_label.configure(text="Enter a YouTube URL to begin.")
+
+
+
+
+    def open_feedback_link(self):
+        """Opens the default email client with a pre-filled feedback email."""
+        # IMPORTANT: Replace with your actual email address
+        email_address = "yaserzarifi1378@gmail.com"
+        subject = "Feedback for Chai & Clip App"
+
+        # This creates a 'mailto' link that opens the user's email client
+        mailto_link = f"mailto:{email_address}?subject={subject}"
+
+        try:
+            webbrowser.open(mailto_link)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open email client.\n\nPlease send feedback manually to:\n{email_address}")
+            print(f"Failed to open mailto link: {e}")
+
 
 if __name__ == "__main__":
     if sys.platform == "win32":
