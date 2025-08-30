@@ -34,6 +34,7 @@ class YouTubeDownloader:
         # self.root.geometry("600x600")
         # self.root.resizable(False, False)
 
+        self.thumbnail_image = None
         self.root = root
         self.root.title("Chai & Clip")
 
@@ -128,7 +129,7 @@ class YouTubeDownloader:
         # self.analyze_button.pack(side="left")
 
         self.url_entry = ctk.CTkEntry(url_frame, font=("Segoe UI", 12), height=35)
-        self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 5))  # Reduced padding
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=(10, 5))  
 
         self.clear_button = ctk.CTkButton(url_frame, text="Clear", command=self.clear_interface,
                                           height=35, width=60, fg_color="gray", hover_color="dimgray")
@@ -278,7 +279,6 @@ class YouTubeDownloader:
         self.popup_window = ctk.CTkToplevel(self.root)
         self.popup_window.title("New URL Detected")
 
-        # --- MODIFICATION: Make the window always on top ---
         self.popup_window.attributes("-topmost", True)
 
         popup_width = 450
@@ -295,7 +295,6 @@ class YouTubeDownloader:
         popup_frame = ctk.CTkFrame(self.popup_window, fg_color="transparent")
         popup_frame.pack(expand=True, fill="both", padx=20, pady=15)
 
-        # --- MODIFICATION: Use bigger, bolder fonts ---
         display_url = (url[:55] + '...') if len(url) > 55 else url
         ctk.CTkLabel(popup_frame, text="YouTube URL Detected!", font=("Segoe UI", 18, "bold")).pack(pady=(0, 5))
         ctk.CTkLabel(popup_frame, text=display_url, font=("Segoe UI", 12, "italic")).pack(pady=(0, 15))
@@ -303,7 +302,6 @@ class YouTubeDownloader:
         button_frame = ctk.CTkFrame(popup_frame, fg_color="transparent")
         button_frame.pack()
 
-        # --- MODIFICATION: Enlarge the buttons ---
         analyze_button = ctk.CTkButton(button_frame, text="Analyze Now", command=lambda: self.analyze_from_popup(url),
                                        height=40, width=130, font=("Segoe UI", 14, "bold"))
         analyze_button.pack(side="left", padx=10)
@@ -474,7 +472,6 @@ class YouTubeDownloader:
                 else:
                     display_text = f"{f.get('height', 'N/A')}p - {f.get('fps', 'N/A')}fps - {filesize_str} (Requires FFmpeg)"
 
-                # --- FIX: Add the missing data back into the dictionary ---
                 self.available_formats.append({
                     'text': display_text,
                     'height': f.get('height', 0),
@@ -511,7 +508,7 @@ class YouTubeDownloader:
             ydl_opts = {
                 'noplaylist': True,
                 'quiet': True,
-                'ffmpeg_location': ffmpeg_path  # This is the new, important line
+                'ffmpeg_location': ffmpeg_path  
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -544,9 +541,7 @@ class YouTubeDownloader:
 
             error_message = str(e).lower()
 
-            # --- NEW: Define different types of errors ---
 
-            # --- NEW: Define different types of errors ---
             connection_errors = ["no address associated", "failed to establish a new connection",
                                  "network is unreachable", "winerror 10013",
                                  "10054", "forcibly closed",
@@ -554,7 +549,6 @@ class YouTubeDownloader:
 
             blocking_errors = ["sign in", "429", "too many requests"]
 
-            # --- Step 1: Check for a general connection failure FIRST ---
 
             if any(err in error_message for err in connection_errors):
                 self.root.after(0, lambda: messagebox.showerror("No Internet Connection",
@@ -565,7 +559,6 @@ class YouTubeDownloader:
 
                 return
 
-            # --- Step 2: If it's not a connection error, check for a YouTube block ---
 
             elif any(err in error_message for err in blocking_errors):
                 self.root.after(0, self.show_cookie_error_dialog)
@@ -574,7 +567,6 @@ class YouTubeDownloader:
 
                 return
 
-            # --- Step 3: If it's neither, show a generic analysis error ---
 
             self.root.after(0, lambda: messagebox.showerror("Analysis Failed",
                                                             f"Could not analyze the URL.\n\nError: {str(e)}"))
@@ -619,7 +611,7 @@ class YouTubeDownloader:
                 'noplaylist': True,
                 'quiet': True,
                 'cookiefile': self.cookie_file_path,
-                'ffmpeg_location': ffmpeg_path  # Add this line
+                'ffmpeg_location': ffmpeg_path 
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -754,7 +746,7 @@ class YouTubeDownloader:
         for widget in self.connection_loss_popup.winfo_children():
             widget.destroy()
 
-        # Add the new "Connected!" message
+        
         success_label = ctk.CTkLabel(self.connection_loss_popup,
                                      text="Connected!",
                                      font=("Segoe UI", 22, "bold"),
@@ -920,7 +912,6 @@ class YouTubeDownloader:
     def download_video(self, url, path, selected_format):
         connection_was_lost = False
 
-        # --- THIS IS THE NEW PERSISTENT DOWNLOAD LOOP ---
         while not self.stop_operation_flag.is_set():
             try:
                 ffmpeg_path = os.path.join(self.application_path, "assets", "ffmpeg.exe")
@@ -996,10 +987,8 @@ class YouTubeDownloader:
         dialog = ctk.CTkToplevel(self.root)
         dialog.title("Success")
 
-        # --- MODIFICATION: Make the window always on top ---
         dialog.attributes("-topmost", True)
 
-        # --- MODIFICATION: Center the dialog on the screen ---
         popup_width = 400
         popup_height = 150
         screen_width = dialog.winfo_screenwidth()
@@ -1067,7 +1056,7 @@ class YouTubeDownloader:
         self.root.geometry("600x600")
 
         self.uploader_label.configure(text="")
-        self.thumbnail_image = None  # This variable is still used, so clear it
+        self.thumbnail_image = None  
 
     def reset_ui(self):
         self.stop_download_heartbeat()
@@ -1121,7 +1110,6 @@ class YouTubeDownloader:
 
     def open_feedback_link(self):
         """Opens the default email client with a pre-filled feedback email."""
-        # IMPORTANT: Replace with your actual email address
         email_address = "yaserzarifi1378@gmail.com"
         subject = "Feedback for Chai & Clip App"
 
